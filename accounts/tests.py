@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from .models import CustomUser, Label, Organization, Project
+from .models import AnnotatorBucketAssignment, CustomUser, Label, Organization, Project
 
 
 class AccountsFlowTests(TestCase):
@@ -50,7 +50,7 @@ class AccountsFlowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "not verified")
 
-    def test_api_login_includes_assigned_s3_path(self):
+    def test_api_login_includes_bucket_assignments(self):
         user = User.objects.create_user(username="apiu", password="Pass12345!")
         owner_user = User.objects.create_user(username="assigner_api", password="Pass12345!")
         owner_profile = CustomUser.objects.create(
@@ -68,12 +68,24 @@ class AccountsFlowTests(TestCase):
         Label.objects.create(project=project, name="pothole")
         Label.objects.create(project=project, name="crack")
 
-        CustomUser.objects.create(
+        profile = CustomUser.objects.create(
             django_user=user,
             role=CustomUser.ROLE_ANNOTATOR,
             is_verified=True,
             assigned_s3_path="raiotransection/test/worker/frames/images",
             assigned_project=project,
+        )
+        AnnotatorBucketAssignment.objects.create(
+            annotator=profile,
+            project=project,
+            s3_path="raiotransection/test/worker/frames/images",
+            display_name="Images bucket",
+        )
+        AnnotatorBucketAssignment.objects.create(
+            annotator=profile,
+            project=project,
+            s3_path="raiotransection/test/worker/frames/videos",
+            display_name="Videos bucket",
         )
 
         response = self.client.post(
@@ -90,8 +102,10 @@ class AccountsFlowTests(TestCase):
         )
         self.assertEqual(payload["user"]["assigned_project"]["name"], "Road QA")
         self.assertEqual(payload["user"]["assigned_project_labels"], ["crack", "pothole"])
+        self.assertEqual(len(payload["user"]["bucket_assignments"]), 2)
+        self.assertEqual(payload["user"]["bucket_assignments"][0]["project_name"], "Road QA")
 
-    def test_assigner_can_assign_bucket_path_and_project_to_annotator(self):
+    def test_assigner_can_assign_multiple_buckets_to_annotator(self):
         assigner_user = User.objects.create_user(username="assigner1", password="Pass12345!")
         assigner_profile = CustomUser.objects.create(
             django_user=assigner_user,
@@ -117,21 +131,21 @@ class AccountsFlowTests(TestCase):
         response = self.client.post(
             reverse("assigner_dash"),
             {
-                "action": "assign_annotator",
+                "action": "add_bucket_assignment",
                 "annotator_id": annotator_profile.id,
                 "assigned_s3_path": "raiotransection/test/worker/frames/videos",
                 "assigned_project_id": project.id,
+                "display_name": "Video bucket",
             },
         )
         self.assertEqual(response.status_code, 302)
         self.assertRedirects(response, reverse("assigner_dash"))
 
         annotator_profile.refresh_from_db()
-        self.assertEqual(
-            annotator_profile.assigned_s3_path,
-            "raiotransection/test/worker/frames/videos",
-        )
-        self.assertEqual(annotator_profile.assigned_project_id, project.id)
+        assignments = list(AnnotatorBucketAssignment.objects.filter(annotator=annotator_profile))
+        self.assertEqual(len(assignments), 1)
+        self.assertEqual(assignments[0].s3_path, "raiotransection/test/worker/frames/videos")
+        self.assertEqual(assignments[0].project_id, project.id)
 
     def test_assigner_can_create_project_and_label(self):
         assigner_user = User.objects.create_user(username="assigner2", password="Pass12345!")
@@ -184,7 +198,7 @@ class AccountsFlowTests(TestCase):
         response = self.client.post(
             reverse("assigner_dash"),
             {
-                "action": "assign_annotator",
+                "action": "add_bucket_assignment",
                 "annotator_id": annotator_profile.id,
                 "assigned_s3_path": "raiotransection/test/blocked/path",
             },
@@ -193,4 +207,4 @@ class AccountsFlowTests(TestCase):
         self.assertEqual(response.url, reverse("dashboard"))
 
         annotator_profile.refresh_from_db()
-        self.assertEqual(annotator_profile.assigned_s3_path, "")
+        self.assertEqual(AnnotatorBucketAssignment.objects.filter(annotator=annotator_profile).count(), 0)

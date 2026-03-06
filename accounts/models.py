@@ -231,3 +231,28 @@ class Annotation(models.Model):
 
     class Meta:
         ordering = ['frame', 'id']
+
+
+class AnnotatorBucketAssignment(models.Model):
+    annotator = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='bucket_assignments',
+    )
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        related_name='bucket_assignments',
+        null=True,
+        blank=True,
+    )
+    s3_path = models.CharField(max_length=1024)
+    display_name = models.CharField(max_length=255, blank=True, default='')
+    created_date = models.DateTimeField(auto_now_add=True)
+    updated_date = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.display_name or self.s3_path
+
+    class Meta:
+        ordering = ['project__name', 's3_path']

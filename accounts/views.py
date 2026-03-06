@@ -13,11 +13,33 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from .forms import ForgotPasswordForm, LoginForm, ResetPasswordForm, SignUpForm
-from .models import Annotation, CustomUser, ImageFrame, Job, Label, Organization, Project, Task
+from .models import (
+    Annotation,
+    AnnotatorBucketAssignment,
+    CustomUser,
+    ImageFrame,
+    Job,
+    Label,
+    Organization,
+    Project,
+    Task,
+)
+
+
+def _serialize_bucket_assignment(obj):
+    return {
+        "id": obj.id,
+        "display_name": obj.display_name,
+        "s3_path": obj.s3_path,
+        "project_id": obj.project_id,
+        "project_name": obj.project.name if obj.project_id else "",
+        "project_labels": [label.name for label in obj.project.labels.order_by('name')] if obj.project_id else [],
+    }
 
 
 def _serialize_custom_user(user, custom_profile):
     assigned_project = custom_profile.assigned_project
+    bucket_assignments = list(custom_profile.bucket_assignments.select_related('project').prefetch_related('project__labels'))
     return {
         "id": custom_profile.id,
         "django_user_id": user.id,
@@ -34,6 +56,7 @@ def _serialize_custom_user(user, custom_profile):
         "assigned_project_labels": [
             label.name for label in assigned_project.labels.order_by('name')
         ] if assigned_project else [],
+        "bucket_assignments": [_serialize_bucket_assignment(item) for item in bucket_assignments],
         "is_verified": custom_profile.is_verified,
         "created_date": custom_profile.created_date.isoformat() if custom_profile.created_date else None,
         "updated_date": custom_profile.updated_date.isoformat() if custom_profile.updated_date else None,
@@ -374,12 +397,26 @@ def assigner_dashboard_view(request):
             messages.success(request, f'Label "{label_name}" added to project "{project.name}".')
             return redirect('assigner_dash')
 
+        if action == 'delete_bucket_assignment':
+            assignment_id = request.POST.get('assignment_id')
+            try:
+                assignment = AnnotatorBucketAssignment.objects.select_related('annotator__django_user').get(id=assignment_id)
+            except AnnotatorBucketAssignment.DoesNotExist:
+                messages.error(request, 'Bucket assignment not found.')
+                return redirect('assigner_dash')
+
+            annotator_name = assignment.annotator.django_user.username
+            assignment.delete()
+            messages.success(request, f'Removed bucket assignment for {annotator_name}.')
+            return redirect('assigner_dash')
+
         annotator_id = request.POST.get('annotator_id')
         assigned_s3_path = (request.POST.get('assigned_s3_path') or '').strip()
         project_id = request.POST.get('assigned_project_id')
+        display_name = (request.POST.get('display_name') or '').strip()
 
-        if not annotator_id:
-            messages.error(request, 'Select an annotator to assign bucket path and project.')
+        if not annotator_id or not assigned_s3_path:
+            messages.error(request, 'Select an annotator and provide a bucket path.')
             return redirect('assigner_dash')
 
         try:
@@ -394,25 +431,33 @@ def assigner_dashboard_view(request):
         assigned_project = None
         if project_id:
             try:
-                assigned_project = Project.objects.get(id=project_id)
+                assigned_project = Project.objects.get(id=project_id, owner=custom_user)
             except Project.DoesNotExist:
                 messages.error(request, 'Assigned project not found.')
                 return redirect('assigner_dash')
 
-        annotator.assigned_s3_path = assigned_s3_path
-        annotator.assigned_project = assigned_project
-        annotator.save(update_fields=['assigned_s3_path', 'assigned_project', 'updated_date'])
-        project_message = assigned_project.name if assigned_project else 'No project'
+        assignment = AnnotatorBucketAssignment.objects.create(
+            annotator=annotator,
+            project=assigned_project,
+            s3_path=assigned_s3_path,
+            display_name=display_name or assigned_s3_path,
+        )
+
+        if not annotator.assigned_project and assigned_project:
+            annotator.assigned_project = assigned_project
+            annotator.assigned_s3_path = assigned_s3_path
+            annotator.save(update_fields=['assigned_project', 'assigned_s3_path', 'updated_date'])
+
         messages.success(
             request,
-            f"Updated {annotator.django_user.username}: path={assigned_s3_path or 'cleared'}, project={project_message}.",
+            f'Added bucket "{assignment.display_name}" for {annotator.django_user.username}.',
         )
         return redirect('assigner_dash')
 
     annotators = CustomUser.objects.filter(role=CustomUser.ROLE_ANNOTATOR).select_related(
         'django_user',
         'assigned_project',
-    ).prefetch_related('assigned_project__labels')
+    ).prefetch_related('assigned_project__labels', 'bucket_assignments__project__labels')
     projects = Project.objects.filter(owner=custom_user).select_related('organization').prefetch_related('labels').order_by('name')
     return render(
         request,

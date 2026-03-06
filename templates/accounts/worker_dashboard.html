@@ -81,7 +81,7 @@
             <div class="card border-0 shadow-sm">
                 <div class="card-header bg-light d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">Annotator Assignment Table</h5>
-                    <span class="text-muted small">Assign bucket path and project labels</span>
+                    <span class="text-muted small">Assign multiple bucket paths and projects</span>
                 </div>
                 <div class="card-body">
                     {% if annotators %}
@@ -90,11 +90,9 @@
                                 <thead>
                                     <tr>
                                         <th>Annotator</th>
-                                        <th>Bucket Path</th>
-                                        <th>Project</th>
-                                        <th>Default Labels</th>
+                                        <th>Add Bucket</th>
+                                        <th>Assigned Bucket Dirs</th>
                                         <th>Status</th>
-                                        <th>Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -104,52 +102,86 @@
                                                 <div class="fw-semibold">{{ annotator.django_user.username }}</div>
                                                 <div class="text-muted small">{{ annotator.django_user.email|default:"-" }}</div>
                                             </td>
-                                            <td style="min-width: 320px;">
-                                                <form method="post" class="row g-2 align-items-center">
+                                            <td style="min-width: 360px;">
+                                                <form method="post" class="row g-2">
                                                     {% csrf_token %}
-                                                    <input type="hidden" name="action" value="assign_annotator">
+                                                    <input type="hidden" name="action" value="add_bucket_assignment">
                                                     <input type="hidden" name="annotator_id" value="{{ annotator.id }}">
+                                                    <div class="col-12">
+                                                        <input
+                                                            name="display_name"
+                                                            type="text"
+                                                            class="form-control"
+                                                            placeholder="Display name e.g. Bucket A"
+                                                        >
+                                                    </div>
                                                     <div class="col-12">
                                                         <input
                                                             name="assigned_s3_path"
                                                             type="text"
                                                             class="form-control"
-                                                            value="{{ annotator.assigned_s3_path }}"
                                                             placeholder="raiotransection/output/frames/project_a/"
+                                                            required
                                                         >
                                                     </div>
-                                            </td>
-                                            <td style="min-width: 220px;">
+                                                    <div class="col-12">
                                                     <select name="assigned_project_id" class="form-select">
                                                         <option value="">No project</option>
                                                         {% for project in projects %}
-                                                            <option value="{{ project.id }}" {% if annotator.assigned_project_id == project.id %}selected{% endif %}>
+                                                            <option value="{{ project.id }}">
                                                                 {{ project.name }}
                                                             </option>
                                                         {% endfor %}
                                                     </select>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <button type="submit" class="btn btn-sm btn-primary">Add Bucket</button>
+                                                    </div>
+                                                </form>
                                             </td>
-                                            <td style="min-width: 260px;">
-                                                {% if annotator.assigned_project %}
-                                                    {% for label in annotator.assigned_project.labels.all %}
-                                                        <span class="badge me-1 mb-1" style="background-color: {{ label.color }};">{{ label.name }}</span>
-                                                    {% empty %}
-                                                        <span class="text-muted">No labels</span>
-                                                    {% endfor %}
-                                                {% else %}
-                                                    <span class="text-muted">No project assigned</span>
-                                                {% endif %}
+                                            <td style="min-width: 420px;">
+                                                {% for assignment in annotator.bucket_assignments.all %}
+                                                    <div class="border rounded p-2 mb-2">
+                                                        <div class="d-flex justify-content-between align-items-start gap-2">
+                                                            <div>
+                                                                <div class="fw-semibold">{{ assignment.display_name }}</div>
+                                                                <div><code>{{ assignment.s3_path }}</code></div>
+                                                                <div class="text-muted small">
+                                                                    Project:
+                                                                    {% if assignment.project %}
+                                                                        {{ assignment.project.name }}
+                                                                    {% else %}
+                                                                        No project
+                                                                    {% endif %}
+                                                                </div>
+                                                                <div class="mt-1">
+                                                                    {% if assignment.project %}
+                                                                        {% for label in assignment.project.labels.all %}
+                                                                            <span class="badge me-1 mb-1" style="background-color: {{ label.color }};">{{ label.name }}</span>
+                                                                        {% empty %}
+                                                                            <span class="text-muted">No labels</span>
+                                                                        {% endfor %}
+                                                                    {% endif %}
+                                                                </div>
+                                                            </div>
+                                                            <form method="post">
+                                                                {% csrf_token %}
+                                                                <input type="hidden" name="action" value="delete_bucket_assignment">
+                                                                <input type="hidden" name="assignment_id" value="{{ assignment.id }}">
+                                                                <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                                                            </form>
+                                                        </div>
+                                                    </div>
+                                                {% empty %}
+                                                    <span class="text-muted">No bucket assigned</span>
+                                                {% endfor %}
                                             </td>
-                                            <td>
+                                            <td class="align-top">
                                                 {% if annotator.is_verified %}
                                                     <span class="badge bg-success">Verified</span>
                                                 {% else %}
                                                     <span class="badge bg-warning text-dark">Pending</span>
                                                 {% endif %}
-                                            </td>
-                                            <td>
-                                                    <button type="submit" class="btn btn-sm btn-primary">Save</button>
-                                                </form>
                                             </td>
                                         </tr>
                                     {% endfor %}
@@ -193,29 +225,49 @@
                 <div class="col-md-6">
                     <div class="card border-0 shadow-sm h-100">
                         <div class="card-body">
-                            <h5 class="card-title">Assigned Bucket Path</h5>
-                            {% if custom_user.assigned_s3_path %}
-                                <p class="mb-2"><code>{{ custom_user.assigned_s3_path }}</code></p>
-                            {% else %}
+                            <h5 class="card-title">Assigned Bucket Paths</h5>
+                            {% for assignment in custom_user.bucket_assignments.all %}
+                                <div class="border rounded p-2 mb-2">
+                                    <div class="fw-semibold">{{ assignment.display_name }}</div>
+                                    <div><code>{{ assignment.s3_path }}</code></div>
+                                    <div class="text-muted small">
+                                        {% if assignment.project %}
+                                            Project: {{ assignment.project.name }}
+                                        {% else %}
+                                            No project
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% empty %}
                                 <p class="text-muted mb-0">No bucket path has been assigned yet.</p>
-                            {% endif %}
+                            {% endfor %}
                         </div>
                     </div>
                 </div>
                 <div class="col-md-6">
                     <div class="card border-0 shadow-sm h-100">
                         <div class="card-body">
-                            <h5 class="card-title">Assigned Project Labels</h5>
-                            {% if custom_user.assigned_project %}
-                                <p class="fw-semibold mb-2">{{ custom_user.assigned_project.name }}</p>
-                                {% for label in custom_user.assigned_project.labels.all %}
-                                    <span class="badge me-1 mb-1" style="background-color: {{ label.color }};">{{ label.name }}</span>
-                                {% empty %}
-                                    <p class="text-muted mb-0">Project has no labels yet.</p>
-                                {% endfor %}
-                            {% else %}
+                            <h5 class="card-title">Assigned Projects And Labels</h5>
+                            {% for assignment in custom_user.bucket_assignments.all %}
+                                <div class="border rounded p-2 mb-2">
+                                    <div class="fw-semibold">
+                                        {% if assignment.project %}
+                                            {{ assignment.project.name }}
+                                        {% else %}
+                                            No project
+                                        {% endif %}
+                                    </div>
+                                    {% if assignment.project %}
+                                        {% for label in assignment.project.labels.all %}
+                                            <span class="badge me-1 mb-1" style="background-color: {{ label.color }};">{{ label.name }}</span>
+                                        {% empty %}
+                                            <p class="text-muted mb-0">Project has no labels yet.</p>
+                                        {% endfor %}
+                                    {% endif %}
+                                </div>
+                            {% empty %}
                                 <p class="text-muted mb-0">No project has been assigned yet.</p>
-                            {% endif %}
+                            {% endfor %}
                         </div>
                     </div>
                 </div>

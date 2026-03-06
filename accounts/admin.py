@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     Annotation,
+    AnnotatorBucketAssignment,
     Attribute,
     CustomUser,
     ImageFrame,
@@ -88,3 +89,10 @@ class AttributeAdmin(admin.ModelAdmin):
 class AnnotationAdmin(admin.ModelAdmin):
     list_display = ['id', 'job', 'label', 'type', 'frame']
     list_filter = ['type', 'label']
+
+
+@admin.register(AnnotatorBucketAssignment)
+class AnnotatorBucketAssignmentAdmin(admin.ModelAdmin):
+    list_display = ['display_name', 'annotator', 'project', 's3_path', 'created_date']
+    list_filter = ['project', 'created_date']
+    search_fields = ['display_name', 's3_path', 'annotator__django_user__username']
