@@ -1,5 +1,4 @@
 from django.contrib.auth.models import User as DjangoUser
-from django.core.validators import MinValueValidator
 from django.db import models
 
 
@@ -97,140 +96,16 @@ class Project(models.Model):
         ]
 
 
-class Task(models.Model):
-    STATUS_CREATED = 'created'
-    STATUS_IN_PROGRESS = 'in_progress'
-    STATUS_COMPLETED = 'completed'
-
-    STATUS_CHOICES = (
-        (STATUS_CREATED, 'Created'),
-        (STATUS_IN_PROGRESS, 'In Progress'),
-        (STATUS_COMPLETED, 'Completed'),
-    )
-
-    name = models.CharField(max_length=255)
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='tasks')
-    owner = models.ForeignKey(CustomUser, on_delete=models.PROTECT, related_name='owned_tasks')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_CREATED)
-    created_date = models.DateTimeField(auto_now_add=True)
+class Label(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    projects = models.ManyToManyField(Project, related_name='labels', blank=True)
+    color = models.CharField(max_length=20, default='#FF5733')
 
     def __str__(self):
         return self.name
 
     class Meta:
-        ordering = ['-created_date']
-        constraints = [
-            models.UniqueConstraint(fields=['project', 'name'], name='uniq_task_name_per_project')
-        ]
-
-
-class Job(models.Model):
-    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='jobs')
-    assignee = models.ForeignKey(
-        CustomUser,
-        on_delete=models.SET_NULL,
-        related_name='assigned_jobs',
-        null=True,
-        blank=True,
-    )
-    start_frame = models.PositiveIntegerField(default=0, validators=[MinValueValidator(0)])
-    stop_frame = models.PositiveIntegerField(validators=[MinValueValidator(0)])
-    created_date = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Job {self.id} - {self.task.name}"
-
-    class Meta:
-        ordering = ['id']
-
-
-class ImageFrame(models.Model):
-    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='images')
-    frame = models.PositiveIntegerField(validators=[MinValueValidator(0)])
-    path = models.CharField(max_length=1024)
-    width = models.PositiveIntegerField(validators=[MinValueValidator(1)])
-    height = models.PositiveIntegerField(validators=[MinValueValidator(1)])
-
-    def __str__(self):
-        return f"{self.task.name} - frame {self.frame}"
-
-    class Meta:
-        ordering = ['task', 'frame']
-        constraints = [
-            models.UniqueConstraint(fields=['task', 'frame'], name='uniq_frame_per_task')
-        ]
-
-
-class Label(models.Model):
-    name = models.CharField(max_length=100)
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='labels')
-    color = models.CharField(max_length=20, default='#FF5733')
-
-    def __str__(self):
-        return f"{self.project.name}: {self.name}"
-
-    class Meta:
         ordering = ['name']
-        constraints = [
-            models.UniqueConstraint(fields=['project', 'name'], name='uniq_label_name_per_project')
-        ]
-
-
-class Attribute(models.Model):
-    TYPE_TEXT = 'text'
-    TYPE_NUMBER = 'number'
-    TYPE_BOOLEAN = 'boolean'
-    TYPE_SELECT = 'select'
-
-    TYPE_CHOICES = (
-        (TYPE_TEXT, 'Text'),
-        (TYPE_NUMBER, 'Number'),
-        (TYPE_BOOLEAN, 'Boolean'),
-        (TYPE_SELECT, 'Select'),
-    )
-
-    label = models.ForeignKey(Label, on_delete=models.CASCADE, related_name='attributes')
-    name = models.CharField(max_length=100)
-    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_TEXT)
-
-    def __str__(self):
-        return f"{self.label.name}: {self.name}"
-
-    class Meta:
-        ordering = ['name']
-        constraints = [
-            models.UniqueConstraint(fields=['label', 'name'], name='uniq_attribute_name_per_label')
-        ]
-
-
-class Annotation(models.Model):
-    TYPE_BBOX = 'bbox'
-    TYPE_POLYGON = 'polygon'
-    TYPE_POLYLINE = 'polyline'
-    TYPE_MASK = 'mask'
-    TYPE_CUBOID = 'cuboid'
-    TYPE_SKELETON = 'skeleton'
-
-    TYPE_CHOICES = (
-        (TYPE_BBOX, 'Bounding Box'),
-        (TYPE_POLYGON, 'Polygon'),
-        (TYPE_POLYLINE, 'Polyline'),
-        (TYPE_MASK, 'Mask'),
-        (TYPE_CUBOID, 'Cuboid'),
-        (TYPE_SKELETON, 'Skeleton'),
-    )
-
-    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name='annotations')
-    label = models.ForeignKey(Label, on_delete=models.PROTECT, related_name='annotations')
-    type = models.CharField(max_length=20, choices=TYPE_CHOICES)
-    frame = models.PositiveIntegerField(validators=[MinValueValidator(0)])
-    coordinates = models.JSONField(help_text='Coordinates / geometry payload for the annotation.')
-
-    def __str__(self):
-        return f"Annotation {self.id} ({self.type})"
-
-    class Meta:
-        ordering = ['frame', 'id']
 
 
 class AnnotatorBucketAssignment(models.Model):

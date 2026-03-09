@@ -1,0 +1,18 @@
+{% extends 'accounts/admin_base.html' %}
+{% block dashboard_content %}
+<section class="summary-grid">
+    <article class="summary-card"><div class="summary-card__label">Users</div><div class="summary-card__value">{{ users|length }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Buckets</div><div class="summary-card__value">{{ assignment_summary.total }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Done</div><div class="summary-card__value">{{ assignment_summary.complete }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Pending</div><div class="summary-card__value">{{ assignment_summary.pending }}</div></article>
+</section>
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">Task Status Overview</h2><p class="content-card__hint">Admin home shows overall task and user status.</p></div></div>
+    <div class="card-grid">
+        <article class="soft-card"><strong>Admins</strong><div class="mt-2">{{ display_role_counts.admin }}</div></article>
+        <article class="soft-card"><strong>Assigners</strong><div class="mt-2">{{ display_role_counts.assigner }}</div></article>
+        <article class="soft-card"><strong>Annotators</strong><div class="mt-2">{{ display_role_counts.annotator }}</div></article>
+        <article class="soft-card"><strong>Reviewers</strong><div class="mt-2">{{ display_role_counts.reviewer }}</div></article>
+    </div>
+</section>
+{% endblock %}

@@ -1,16 +1,11 @@
 from django.contrib import admin
 
 from .models import (
-    Annotation,
     AnnotatorBucketAssignment,
-    Attribute,
     CustomUser,
-    ImageFrame,
-    Job,
     Label,
     Organization,
     Project,
-    Task,
 )
 
 
@@ -51,44 +46,17 @@ class ProjectAdmin(admin.ModelAdmin):
     search_fields = ['name', 'organization__name']
 
 
-@admin.register(Task)
-class TaskAdmin(admin.ModelAdmin):
-    list_display = ['name', 'project', 'owner', 'status', 'created_date']
-    list_filter = ['status', 'project']
-    search_fields = ['name', 'project__name']
-
-
-@admin.register(Job)
-class JobAdmin(admin.ModelAdmin):
-    list_display = ['id', 'task', 'assignee', 'start_frame', 'stop_frame', 'created_date']
-    list_filter = ['task']
-
-
-@admin.register(ImageFrame)
-class ImageFrameAdmin(admin.ModelAdmin):
-    list_display = ['id', 'task', 'frame', 'path', 'width', 'height']
-    list_filter = ['task']
-    search_fields = ['path']
-
-
 @admin.register(Label)
 class LabelAdmin(admin.ModelAdmin):
-    list_display = ['name', 'project', 'color']
-    list_filter = ['project']
+    list_display = ['name', 'get_projects', 'color']
+    list_filter = ['projects']
     search_fields = ['name']
+    filter_horizontal = ['projects']
 
+    def get_projects(self, obj):
+        return ", ".join(obj.projects.order_by('name').values_list('name', flat=True)) or "-"
 
-@admin.register(Attribute)
-class AttributeAdmin(admin.ModelAdmin):
-    list_display = ['name', 'label', 'type']
-    list_filter = ['type', 'label']
-    search_fields = ['name']
-
-
-@admin.register(Annotation)
-class AnnotationAdmin(admin.ModelAdmin):
-    list_display = ['id', 'job', 'label', 'type', 'frame']
-    list_filter = ['type', 'label']
+    get_projects.short_description = 'Projects'
 
 
 @admin.register(AnnotatorBucketAssignment)

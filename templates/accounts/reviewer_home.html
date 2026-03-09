@@ -1,0 +1,23 @@
+{% extends 'accounts/reviewer_base.html' %}
+{% block dashboard_content %}
+<section class="summary-grid">
+    <article class="summary-card"><div class="summary-card__label">Tracked Buckets</div><div class="summary-card__value">{{ assignment_summary.total }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Done</div><div class="summary-card__value">{{ assignment_summary.complete }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Pending</div><div class="summary-card__value">{{ assignment_summary.pending }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Projects</div><div class="summary-card__value">{{ review_projects|length }}</div></article>
+</section>
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">Overview And Task Info</h2><p class="content-card__hint">Reviewer home shows task completion and pending work.</p></div></div>
+    <div class="card-grid">
+        {% for assignment in review_assignment_rows %}
+        <article class="soft-card">
+            <strong>{{ assignment.display_name }}</strong>
+            <div class="mt-1 text-muted small">{{ assignment.annotator.django_user.username }}</div>
+            {% include 'accounts/_bucket_progress_panel.html' with assignment=assignment %}
+        </article>
+        {% empty %}
+        <article class="soft-card">No reviewer tasks yet.</article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

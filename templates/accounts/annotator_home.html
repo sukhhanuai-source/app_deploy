@@ -1,0 +1,23 @@
+{% extends 'accounts/anotator_base.html' %}
+{% block dashboard_content %}
+<section class="summary-grid">
+    <article class="summary-card"><div class="summary-card__label">Total Tasks</div><div class="summary-card__value">{{ assignment_summary.total }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Done</div><div class="summary-card__value">{{ assignment_summary.complete }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">In Progress</div><div class="summary-card__value">{{ assignment_summary.in_progress }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Queue</div><div class="summary-card__value">{{ assignment_summary.queue }}</div></article>
+</section>
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">Overview And Task Progress</h2><p class="content-card__hint">Only tasks currently in progress are shown here.</p></div></div>
+    <div class="card-grid">
+        {% for assignment in in_progress_assignments %}
+        <article class="soft-card">
+            <strong>{{ assignment.display_name }}</strong>
+            <div class="mt-2"><code>{{ assignment.s3_path }}</code></div>
+            {% include 'accounts/_bucket_progress_panel.html' with assignment=assignment show_completion_actions=True %}
+        </article>
+        {% empty %}
+        <article class="soft-card">No in-progress tasks right now.</article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends base_template %}
+{% block dashboard_content %}
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">{{ page_title }}</h2><p class="content-card__hint">Create labels and attach them with projects.</p></div></div>
+    <form method="post" class="form-grid">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_label">
+        <div class="field-group">
+            <label class="field-label">Projects</label>
+            <div class="card-grid">
+                {% for project in projects %}
+                <label class="soft-card"><input type="checkbox" name="project_ids" value="{{ project.id }}"> {{ project.name }}</label>
+                {% empty %}
+                <div class="soft-card">No projects available.</div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="form-grid form-grid--two">
+            <div class="field-group"><label class="field-label">Label Name</label><input name="label_name" required></div>
+            <div class="field-group"><label class="field-label">Color</label><input type="color" name="label_color" value="#ff5733"></div>
+        </div>
+        <div><button type="submit" class="btn btn-primary">Create Label</button></div>
+    </form>
+</section>
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">Existing Labels</h2></div></div>
+    <div class="card-grid">
+        {% for label in labels %}
+        <article class="soft-card">
+            <strong>{{ label.name }}</strong>
+            <div class="mt-2"><span class="badge-soft">{{ label.color }}</span></div>
+            <form method="post" class="form-grid mt-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="edit_label">
+                <input type="hidden" name="label_id" value="{{ label.id }}">
+                <div class="field-group"><label class="field-label">Rename</label><input name="label_name" value="{{ label.name }}"></div>
+                <div class="field-group"><label class="field-label">Color</label><input type="color" name="label_color" value="{{ label.color }}"></div>
+                <div class="field-group">
+                    <label class="field-label">Attach Projects</label>
+                    <div class="card-grid">
+                        {% for project in projects %}
+                        <label class="soft-card"><input type="checkbox" name="project_ids" value="{{ project.id }}" {% if project in label.projects.all %}checked{% endif %}> {{ project.name }}</label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div><button type="submit" class="btn btn-outline-primary">Save Label</button></div>
+            </form>
+        </article>
+        {% empty %}
+        <article class="soft-card">No labels yet.</article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

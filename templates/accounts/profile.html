@@ -1,11 +1,15 @@
 {% extends 'base.html' %}
 
-{% block title %}My Profile{% endblock %}
+{% block title %}My Profile | Hanu AI Annotation{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-lg-8 mx-auto">
-        <h1 class="mb-4">My Profile</h1>
+        <div class="mb-4">
+            <div class="text-uppercase fw-bold small text-success mb-2" style="letter-spacing:0.14em;">Identity</div>
+            <h1 class="mb-2">My Profile</h1>
+            <p class="surface-note mb-0">Your Hanu AI Annotation account details, role, and current workspace access.</p>
+        </div>
 
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-header bg-light">
@@ -38,7 +42,7 @@
 
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-header bg-light">
-                <h5 class="mb-0">Account Details</h5>
+                <h5 class="mb-0">Workspace Details</h5>
             </div>
             <div class="card-body">
                 <div class="row mb-3">
