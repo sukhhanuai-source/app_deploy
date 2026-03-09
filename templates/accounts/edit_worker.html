@@ -1,0 +1,151 @@
+{% extends 'base.html' %}
+
+{% block title %}Edit Worker - {{ worker.django_user.username }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8 mx-auto">
+        <h1 class="mb-4">Edit Worker: {{ worker.django_user.username }}</h1>
+
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Worker Information</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+
+                    {# Worker Basic Info (Read-only) #}
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Username</strong></label>
+                                <input type="text" class="form-control" value="{{ worker.django_user.username }}" readonly>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Email</strong></label>
+                                <input type="text" class="form-control" value="{{ worker.django_user.email }}" readonly>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Phone Number</strong></label>
+                                <input type="text" class="form-control" value="{{ worker.phone_number|default:'Not provided' }}" readonly>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Joined</strong></label>
+                                <input type="text" class="form-control" value="{{ worker.created_at|date:'M d, Y' }}" readonly>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    {# Admin Assignments #}
+                    <h5 class="mb-3">Admin Assignments</h5>
+
+                    {# Country Dropdown #}
+                    <div class="mb-3">
+                        <label for="country" class="form-label">
+                            <strong>🌍 Assign Country</strong>
+                        </label>
+                        <select name="country" id="country" class="form-control">
+                            <option value="">-- Select Country --</option>
+                            {% for country in countries %}
+                                <option value="{{ country.id }}" 
+                                    {% if worker.country.id == country.id %}selected{% endif %}>
+                                    {{ country.name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    {# Data Dropdown #}
+                    <div class="mb-3">
+                        <label for="data" class="form-label">
+                            <strong>📊 Assign Data</strong>
+                        </label>
+                        <select name="data" id="data" class="form-control">
+                            <option value="">-- Select Data --</option>
+                            {% for data in data_list %}
+                                <option value="{{ data.id }}" 
+                                    {% if worker.data.id == data.id %}selected{% endif %}>
+                                    {{ data.name }} ({{ data.data_type }})
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    {# Dashboard URL Dropdown #}
+                    <div class="mb-3">
+                        <label for="dashboard_url" class="form-label">
+                            <strong>🔗 Assign Dashboard URL</strong>
+                        </label>
+                        <select name="dashboard_url" id="dashboard_url" class="form-control">
+                            <option value="">-- Select Dashboard URL --</option>
+                            {% for url in dashboard_urls %}
+                                <option value="{{ url.id }}" 
+                                    {% if worker.dashboard_url.id == url.id %}selected{% endif %}>
+                                    {{ url.name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <hr>
+
+                    {# Verification Checkbox #}
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="is_verified" name="is_verified" 
+                                {% if worker.is_verified %}checked{% endif %}>
+                            <label class="form-check-label" for="is_verified">
+                                <strong>✓ Verify this worker</strong>
+                            </label>
+                        </div>
+                        <small class="form-text text-muted d-block mt-2">
+                            Check this box to verify the worker has been reviewed and approved.
+                        </small>
+                    </div>
+
+                    <hr>
+
+                    {# Status Summary #}
+                    <div class="alert alert-info">
+                        <h6 class="alert-heading">Current Status</h6>
+                        <ul class="mb-0">
+                            <li><strong>Country:</strong> {{ worker.country.name|default:"Not Assigned" }}</li>
+                            <li><strong>Data:</strong> {{ worker.data.name|default:"Not Assigned" }}</li>
+                            <li><strong>Dashboard URL:</strong> {{ worker.dashboard_url.name|default:"Not Assigned" }}</li>
+                            <li><strong>Verified:</strong> 
+                                {% if worker.is_verified %}
+                                    <span class="badge bg-success">Yes</span>
+                                {% else %}
+                                    <span class="badge bg-danger">No</span>
+                                {% endif %}
+                            </li>
+                        </ul>
+                    </div>
+
+                    <hr>
+
+                    {# Action Buttons #}
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{% url 'manage_workers' %}" class="btn btn-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            Save Changes
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

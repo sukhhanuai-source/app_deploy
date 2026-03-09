@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+
+{% block title %}My Profile | Hanu AI Annotation{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8 mx-auto">
+        <div class="mb-4">
+            <div class="text-uppercase fw-bold small text-success mb-2" style="letter-spacing:0.14em;">Identity</div>
+            <h1 class="mb-2">My Profile</h1>
+            <p class="surface-note mb-0">Your Hanu AI Annotation account details, role, and current workspace access.</p>
+        </div>
+
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Personal Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong>Username</strong></p>
+                        <p class="text-muted">{{ user.username }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong>Email</strong></p>
+                        <p class="text-muted">{{ user.email }}</p>
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong>First Name</strong></p>
+                        <p class="text-muted">{{ user.first_name|default:"Not set" }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong>Last Name</strong></p>
+                        <p class="text-muted">{{ user.last_name|default:"Not set" }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Workspace Details</h5>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong>User Type</strong></p>
+                        <p>
+                            {% if custom_user.user_type == 'admin' %}
+                                <span class="badge bg-danger">{{ custom_user.get_role_display }}</span>
+                            {% else %}
+                                <span class="badge bg-success">{{ custom_user.get_role_display }}</span>
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong>Phone Number</strong></p>
+                        <p class="text-muted">{{ custom_user.phone_number|default:"Not provided" }}</p>
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong>Member Since</strong></p>
+                        <p class="text-muted">{{ custom_user.created_date|date:"M d, Y" }}</p>
+                    </div>
+                </div>
+
+                {% if custom_user.assigned_s3_path %}
+                    <div class="row">
+                        <div class="col-md-12">
+                            <p class="mb-1"><strong>Assigned Bucket Path</strong></p>
+                            <p class="text-muted"><code>{{ custom_user.assigned_s3_path }}</code></p>
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">Security</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">Manage your password and security settings</p>
+                <a href="{% url 'forgot_password' %}" class="btn btn-primary">Change Password</a>
+                <a href="{% url 'dashboard' %}" class="btn btn-secondary">Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

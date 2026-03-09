@@ -1,0 +1,569 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ dashboard_title }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-11 mx-auto">
+        <div class="mb-4">
+            <h1 class="mb-2">{{ dashboard_title }}</h1>
+            <p class="text-muted mb-0">
+                {% if user.first_name or user.last_name %}
+                    {{ user.first_name }} {{ user.last_name }}
+                {% else %}
+                    {{ user.username }}
+                {% endif %}
+            </p>
+        </div>
+
+        {% if custom_user.role == 'assigner' %}
+            <section class="assigner-hero mb-4">
+                <div class="assigner-hero__content">
+                    <div>
+                        <div class="assigner-kicker">Assignment Workspace</div>
+                        <h2 class="mb-2">Plan projects, labels, and annotator buckets from one screen</h2>
+                        <p class="text-muted mb-0">Create the project structure first, then assign the correct data source and label set to each annotator.</p>
+                    </div>
+                    <div class="assigner-metrics">
+                        <div class="assigner-metric">
+                            <span class="assigner-metric__value">{{ projects|length }}</span>
+                            <span class="assigner-metric__label">Projects</span>
+                        </div>
+                        <div class="assigner-metric">
+                            <span class="assigner-metric__value">{{ annotators|length }}</span>
+                            <span class="assigner-metric__label">Annotators</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="row g-4 mb-4">
+                <div class="col-xl-5">
+                    <div class="card border-0 shadow-sm h-100 assigner-panel">
+                        <div class="card-header bg-light">
+                            <h5 class="mb-0">Project Setup</h5>
+                        </div>
+                        <div class="card-body">
+                            <form method="post" class="row g-3 mb-4">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="create_project">
+                                <div class="col-12">
+                                    <label for="project_name" class="form-label">Project name</label>
+                                    <input id="project_name" name="project_name" type="text" class="form-control" placeholder="Road Defects Survey" required>
+                                </div>
+                                <div class="col-12">
+                                    <label for="project_description" class="form-label">Description</label>
+                                    <textarea id="project_description" name="project_description" class="form-control" rows="3" placeholder="Optional project description"></textarea>
+                                </div>
+                                <div class="col-12">
+                                    <button type="submit" class="btn btn-primary">Create Project</button>
+                                </div>
+                            </form>
+
+                            <div class="assigner-divider"></div>
+
+                            <form method="post" class="row g-3 mt-1">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="create_label">
+                                <div class="col-12">
+                                    <label for="project_id" class="form-label">Add label to project</label>
+                                    <select id="project_id" name="project_id" class="form-select" required>
+                                        <option value="">Select project</option>
+                                        {% for project in projects %}
+                                            <option value="{{ project.id }}">{{ project.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-8">
+                                    <label for="label_name" class="form-label">Label name</label>
+                                    <input id="label_name" name="label_name" type="text" class="form-control" placeholder="pothole" required>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="label_color" class="form-label">Color</label>
+                                    <input id="label_color" name="label_color" type="color" class="form-control form-control-color" value="#ff5733">
+                                </div>
+                                <div class="col-12">
+                                    <button type="submit" class="btn btn-outline-primary">Add Label</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-7">
+                    <div class="card border-0 shadow-sm h-100 assigner-panel">
+                        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Projects Library</h5>
+                            <span class="text-muted small">Labels shown by project</span>
+                        </div>
+                        <div class="card-body">
+                            {% if projects %}
+                                <div class="row g-3">
+                                    {% for project in projects %}
+                                        <div class="col-md-6">
+                                            <article class="assigner-project-card h-100">
+                                                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                                    <div class="fw-semibold">{{ project.name }}</div>
+                                                    <span class="badge text-bg-light">{{ project.labels.count }} labels</span>
+                                                </div>
+                                                <p class="text-muted small mb-3">{{ project.description|default:"No description" }}</p>
+                                                <div>
+                                                    {% for label in project.labels.all %}
+                                                        <span class="badge me-1 mb-1" style="background-color: {{ label.color }};">{{ label.name }}</span>
+                                                    {% empty %}
+                                                        <span class="text-muted small">No labels added yet.</span>
+                                                    {% endfor %}
+                                                </div>
+                                            </article>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <div class="assigner-empty">
+                                    <h6 class="mb-2">No projects yet</h6>
+                                    <p class="text-muted mb-0">Create your first project, then start building its label set.</p>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm assigner-panel">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Annotator Assignment Board</h5>
+                    <span class="text-muted small">Each annotator can receive multiple bucket paths</span>
+                </div>
+                <div class="card-body">
+                    {% if annotators %}
+                        <div class="row g-4">
+                            {% for annotator in annotators %}
+                                <div class="col-12">
+                                    <section class="assigner-user-card">
+                                        <div class="assigner-user-card__header">
+                                            <div>
+                                                <div class="fw-semibold fs-5">{{ annotator.django_user.username }}</div>
+                                                <div class="text-muted small">{{ annotator.django_user.email|default:"No email provided" }}</div>
+                                            </div>
+                                            <div>
+                                                {% if annotator.is_verified %}
+                                                    <span class="badge bg-success">Verified</span>
+                                                {% else %}
+                                                    <span class="badge bg-warning text-dark">Pending</span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+
+                                        <div class="row g-4">
+                                            <div class="col-lg-5">
+                                                <form method="post" class="row g-2">
+                                                    {% csrf_token %}
+                                                    <input type="hidden" name="action" value="add_bucket_assignment">
+                                                    <input type="hidden" name="annotator_id" value="{{ annotator.id }}">
+                                                    <div class="col-12">
+                                                        <label class="form-label">Display name</label>
+                                                        <input name="display_name" type="text" class="form-control" placeholder="Bucket A">
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <label class="form-label">Bucket path</label>
+                                                        <input name="assigned_s3_path" type="text" class="form-control" placeholder="raiotransection/output/frames/project_a/" required>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <label class="form-label">Linked project</label>
+                                                        <select name="assigned_project_id" class="form-select">
+                                                            <option value="">No project</option>
+                                                            {% for project in projects %}
+                                                                <option value="{{ project.id }}">{{ project.name }}</option>
+                                                            {% endfor %}
+                                                        </select>
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <button type="submit" class="btn btn-primary btn-sm">Assign Bucket</button>
+                                                    </div>
+                                                </form>
+                                            </div>
+
+                                            <div class="col-lg-7">
+                                                {% for assignment in annotator.bucket_assignment_list %}
+                                                    <article class="assigner-assignment mb-3">
+                                                        <div class="d-flex justify-content-between align-items-start gap-3">
+                                                            <div class="flex-grow-1">
+                                                                <div class="fw-semibold">{{ assignment.display_name }}</div>
+                                                                <div class="small text-muted mb-2">
+                                                                    {% if assignment.project %}
+                                                                        Linked to {{ assignment.project.name }}
+                                                                    {% else %}
+                                                                        No project linked
+                                                                    {% endif %}
+                                                                </div>
+                                                                <div class="assigner-path"><code>{{ assignment.s3_path }}</code></div>
+                                                                <div class="mt-2">
+                                                                    {% if assignment.project %}
+                                                                        {% for label in assignment.project.labels.all %}
+                                                                            <span class="badge me-1 mb-1" style="background-color: {{ label.color }};">{{ label.name }}</span>
+                                                                        {% empty %}
+                                                                            <span class="text-muted small">No labels</span>
+                                                                        {% endfor %}
+                                                                    {% endif %}
+                                                                </div>
+                                                                {% include 'accounts/_bucket_progress_panel.html' with assignment=assignment %}
+                                                            </div>
+                                                            <form method="post">
+                                                                {% csrf_token %}
+                                                                <input type="hidden" name="action" value="delete_bucket_assignment">
+                                                                <input type="hidden" name="assignment_id" value="{{ assignment.id }}">
+                                                                <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                                                            </form>
+                                                        </div>
+                                                    </article>
+                                                {% empty %}
+                                                    <div class="assigner-empty h-100">
+                                                        <h6 class="mb-2">No bucket assigned</h6>
+                                                        <p class="text-muted mb-0">Add the first S3 bucket or local path for this annotator.</p>
+                                                    </div>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                    </section>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="assigner-empty">
+                            <h6 class="mb-2">No annotators found</h6>
+                            <p class="text-muted mb-0">Create or verify annotator accounts before assigning work.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        {% elif custom_user.role == 'reviewer' %}
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Assigned Bucket Progress</h5>
+                </div>
+                <div class="card-body">
+                    {% if review_assignment_rows %}
+                        <div class="row g-3">
+                            {% for assignment in review_assignment_rows %}
+                                <div class="col-lg-6">
+                                    <div class="border rounded-3 p-3 h-100">
+                                        <div class="d-flex justify-content-between align-items-start gap-2">
+                                            <div>
+                                                <div class="fw-semibold">{{ assignment.display_name }}</div>
+                                                <div class="small text-muted">{{ assignment.annotator.django_user.username }}</div>
+                                            </div>
+                                            <div class="small text-muted">
+                                                {% if assignment.project %}
+                                                    {{ assignment.project.name }}
+                                                {% else %}
+                                                    No project
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="mt-2"><code>{{ assignment.s3_path }}</code></div>
+                                        {% include 'accounts/_bucket_progress_panel.html' with assignment=assignment %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-0">No bucket assignments available yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">Review Filters</h5>
+                </div>
+                <div class="card-body">
+                    <form method="get" class="row g-3">
+                        <div class="col-md-4">
+                            <label for="project_id" class="form-label">Project</label>
+                            <select id="project_id" name="project_id" class="form-select">
+                                <option value="">Select project</option>
+                                {% for project in review_projects %}
+                                    <option value="{{ project.id }}" {% if selected_project_id == project.id|stringformat:"s" %}selected{% endif %}>
+                                        {{ project.name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="annotator_id" class="form-label">Annotator</label>
+                            <select id="annotator_id" name="annotator_id" class="form-select">
+                                <option value="">Select annotator</option>
+                                {% for annotator in review_annotators %}
+                                    <option value="{{ annotator.id }}" {% if selected_annotator_id == annotator.id|stringformat:"s" %}selected{% endif %}>
+                                        {{ annotator.django_user.username }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="review_date" class="form-label">Date</label>
+                            <input id="review_date" name="review_date" type="date" class="form-control" value="{{ selected_review_date }}">
+                        </div>
+                        <div class="col-md-1 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary w-100">Show</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Reviewed Annotation Previews</h5>
+                    {% if review_page_obj %}
+                        <span class="text-muted small">
+                            Page {{ review_page_obj.number }} of {{ review_page_obj.paginator.num_pages }}
+                            | Showing {{ review_items|length }} of {{ review_page_obj.paginator.count }} JSONs
+                        </span>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    {% if review_items %}
+                        <div class="row g-4">
+                            {% for item in review_items %}
+                                <div class="col-lg-4 col-md-6">
+                                    <div class="card h-100 border">
+                                        <a href="{{ item.preview_url }}" target="_blank" class="text-decoration-none">
+                                            <img src="{{ item.preview_url }}" class="card-img-top" alt="{{ item.file_name }}">
+                                        </a>
+                                        <div class="card-body">
+                                            <h6 class="card-title mb-1">{{ item.file_name }}</h6>
+                                            <p class="text-muted small mb-0"><code>{{ item.key }}</code></p>
+                                            <div class="d-flex gap-2 mt-3">
+                                                <a href="{{ item.preview_url }}" target="_blank" class="btn btn-sm btn-outline-primary">Open Image</a>
+                                                <form method="post" class="d-inline">
+                                                    {% csrf_token %}
+                                                    <input type="hidden" name="action" value="delete_review_json">
+                                                    <input type="hidden" name="review_key" value="{{ item.key }}">
+                                                    <input type="hidden" name="project_id" value="{{ selected_project_id }}">
+                                                    <input type="hidden" name="annotator_id" value="{{ selected_annotator_id }}">
+                                                    <input type="hidden" name="review_date" value="{{ selected_review_date }}">
+                                                    <input type="hidden" name="page" value="{{ review_page_obj.number }}">
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete JSON</button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                        {% if review_page_obj and review_page_obj.paginator.num_pages > 1 %}
+                            <nav class="mt-4" aria-label="Review pagination">
+                                <div class="d-flex flex-wrap gap-2 align-items-center">
+                                    {% if review_page_obj.has_previous %}
+                                        <a
+                                            class="btn btn-sm btn-outline-secondary"
+                                            href="?project_id={{ selected_project_id }}&annotator_id={{ selected_annotator_id }}&review_date={{ selected_review_date }}&page={{ review_page_obj.previous_page_number }}"
+                                        >
+                                            Previous
+                                        </a>
+                                    {% endif %}
+                                    {% for page_number in review_page_obj.paginator.page_range %}
+                                        {% if page_number == review_page_obj.number %}
+                                            <span class="btn btn-sm btn-primary disabled">{{ page_number }}</span>
+                                        {% elif page_number >= review_page_obj.number|add:'-2' and page_number <= review_page_obj.number|add:'2' %}
+                                            <a
+                                                class="btn btn-sm btn-outline-primary"
+                                                href="?project_id={{ selected_project_id }}&annotator_id={{ selected_annotator_id }}&review_date={{ selected_review_date }}&page={{ page_number }}"
+                                            >
+                                                {{ page_number }}
+                                            </a>
+                                        {% endif %}
+                                    {% endfor %}
+                                    {% if review_page_obj.has_next %}
+                                        <a
+                                            class="btn btn-sm btn-outline-secondary"
+                                            href="?project_id={{ selected_project_id }}&annotator_id={{ selected_annotator_id }}&review_date={{ selected_review_date }}&page={{ review_page_obj.next_page_number }}"
+                                        >
+                                            Next
+                                        </a>
+                                    {% endif %}
+                                </div>
+                            </nav>
+                        {% endif %}
+                    {% else %}
+                        <p class="text-muted mb-0">
+                            Select a project, annotator, and date to convert JSON files to JPG previews and review them.
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+        {% else %}
+            <div class="row g-4">
+                <div class="col-md-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Assigned Bucket Paths</h5>
+                            {% for assignment in annotator_assignments %}
+                                <div class="border rounded p-2 mb-2">
+                                    <div class="fw-semibold">{{ assignment.display_name }}</div>
+                                    <div><code>{{ assignment.s3_path }}</code></div>
+                                    <div class="text-muted small">
+                                        {% if assignment.project %}
+                                            Project: {{ assignment.project.name }}
+                                        {% else %}
+                                            No project
+                                        {% endif %}
+                                    </div>
+                                    {% include 'accounts/_bucket_progress_panel.html' with assignment=assignment show_completion_actions=True %}
+                                </div>
+                            {% empty %}
+                                <p class="text-muted mb-0">No bucket path has been assigned yet.</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Assigned Projects And Labels</h5>
+                            {% for assignment in annotator_assignments %}
+                                <div class="border rounded p-2 mb-2">
+                                    <div class="fw-semibold">
+                                        {% if assignment.project %}
+                                            {{ assignment.project.name }}
+                                        {% else %}
+                                            No project
+                                        {% endif %}
+                                    </div>
+                                    {% if assignment.project %}
+                                        {% for label in assignment.project.labels.all %}
+                                            <span class="badge me-1 mb-1" style="background-color: {{ label.color }};">{{ label.name }}</span>
+                                        {% empty %}
+                                            <p class="text-muted mb-0">Project has no labels yet.</p>
+                                        {% endfor %}
+                                    {% endif %}
+                                </div>
+                            {% empty %}
+                                <p class="text-muted mb-0">No project has been assigned yet.</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if custom_user.role == 'assigner' %}
+<style>
+    .assigner-hero {
+        border: 1px solid rgba(13, 138, 114, 0.15);
+        border-radius: 24px;
+        padding: 1.5rem;
+        background:
+            radial-gradient(circle at top right, rgba(240, 180, 77, 0.18), transparent 30%),
+            linear-gradient(135deg, rgba(13, 138, 114, 0.08), rgba(15, 106, 139, 0.04));
+    }
+
+    .assigner-hero__content {
+        display: flex;
+        justify-content: space-between;
+        gap: 1.5rem;
+        align-items: flex-start;
+    }
+
+    .assigner-kicker {
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: var(--primary);
+        margin-bottom: 0.5rem;
+    }
+
+    .assigner-metrics {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .assigner-metric {
+        min-width: 120px;
+        padding: 1rem 1.1rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.78);
+        border: 1px solid rgba(18, 43, 51, 0.08);
+        text-align: center;
+    }
+
+    .assigner-metric__value {
+        display: block;
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 1.7rem;
+        font-weight: 700;
+    }
+
+    .assigner-metric__label {
+        display: block;
+        color: var(--muted);
+        font-size: 0.85rem;
+    }
+
+    .assigner-panel {
+        overflow: hidden;
+    }
+
+    .assigner-divider {
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(18, 43, 51, 0.12), transparent);
+        margin: 1rem 0 1.25rem;
+    }
+
+    .assigner-project-card,
+    .assigner-user-card,
+    .assigner-assignment,
+    .assigner-empty {
+        border: 1px solid rgba(18, 43, 51, 0.1);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.8);
+    }
+
+    .assigner-project-card {
+        padding: 1rem;
+    }
+
+    .assigner-user-card {
+        padding: 1.25rem;
+    }
+
+    .assigner-user-card__header {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: flex-start;
+        margin-bottom: 1rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid rgba(18, 43, 51, 0.08);
+    }
+
+    .assigner-assignment {
+        padding: 1rem;
+    }
+
+    .assigner-path {
+        padding: 0.7rem 0.8rem;
+        border-radius: 14px;
+        background: rgba(18, 43, 51, 0.04);
+    }
+
+    .assigner-empty {
+        padding: 1.1rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    @media (max-width: 991px) {
+        .assigner-hero__content,
+        .assigner-user-card__header {
+            flex-direction: column;
+        }
+    }
+</style>
+{% endif %}
+{% endblock %}
