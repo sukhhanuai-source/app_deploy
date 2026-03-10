@@ -1352,6 +1352,49 @@ def admin_home_view(request):
                 f"{request.path}?project_id={request.POST.get('project_id','')}&annotator_id={request.POST.get('annotator_id','')}&review_date={request.POST.get('review_date','')}&page={request.POST.get('page','1')}"
             )
 
+        if action == 'bulk_update_users':
+            user_ids = request.POST.getlist('user_ids')
+            if not user_ids:
+                messages.error(request, 'No users were submitted for update.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            valid_roles = {choice[0] for choice in CustomUser.ROLE_CHOICES}
+            updated = 0
+
+            for user_id in user_ids:
+                role = request.POST.get(f'role_{user_id}')
+                is_verified = request.POST.get(f'verified_{user_id}') == 'on'
+
+                if not role:
+                    messages.error(request, f'Missing role selection for user {user_id}.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                if role not in valid_roles:
+                    messages.error(request, 'Invalid role selected.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                try:
+                    target_user = CustomUser.objects.select_related('django_user').get(id=user_id)
+                except CustomUser.DoesNotExist:
+                    messages.error(request, f'User profile with ID {user_id} not found.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                if target_user.id == custom_user.id and role != CustomUser.ROLE_ADMIN:
+                    messages.error(request, 'You cannot remove your own admin role from this dashboard.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                if target_user.role != role or target_user.is_verified != is_verified:
+                    target_user.role = role
+                    target_user.is_verified = is_verified
+                    target_user.save(update_fields=['role', 'is_verified', 'updated_date'])
+                    updated += 1
+
+            if updated:
+                messages.success(request, f'Saved changes for {updated} user(s).')
+            else:
+                messages.info(request, 'No changes to save.')
+            return _redirect_to_current_page(request, 'admin_home')
+
         target_user_id = request.POST.get('target_user_id')
         role = request.POST.get('role')
         is_verified = request.POST.get('is_verified') == 'on'
