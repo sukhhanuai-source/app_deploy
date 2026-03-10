@@ -1,0 +1,49 @@
+{% extends base_template %}
+{% block dashboard_content %}
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">{{ page_title }}</h2><p class="content-card__hint">Select project and assign S3 bucket to annotator.</p></div></div>
+    <div class="card-grid">
+        {% for annotator in annotators %}
+        <article class="soft-card">
+            <strong>{{ annotator.django_user.username }}</strong>
+            <form method="post" class="form-grid mt-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_bucket_assignment">
+                <input type="hidden" name="annotator_id" value="{{ annotator.id }}">
+                <div class="field-group"><label class="field-label">Display Name</label><input name="display_name"></div>
+                <div class="field-group"><label class="field-label">S3 Bucket Path</label><input name="assigned_s3_path" required></div>
+                <div class="field-group">
+                    <label class="field-label">Project</label>
+                    <select name="assigned_project_id">
+                        <option value="">No project</option>
+                        {% for project in projects %}
+                        <option value="{{ project.id }}">{{ project.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div><button type="submit" class="btn btn-primary">Assign Task</button></div>
+            </form>
+            <div class="mt-3">
+                {% for assignment in annotator.bucket_assignment_list %}
+                <div class="soft-card mt-2">
+                    <strong>{{ assignment.display_name }}</strong>
+                    <div class="mt-1"><code>{{ assignment.s3_path }}</code></div>
+                    {% include 'accounts/_bucket_progress_panel.html' with assignment=assignment %}
+                    <form method="post" class="mt-2">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="delete_bucket_assignment">
+                        <input type="hidden" name="assignment_id" value="{{ assignment.id }}">
+                        <button type="submit" class="btn btn-outline-danger">Remove</button>
+                    </form>
+                </div>
+                {% empty %}
+                <div class="text-muted small mt-2">No assigned buckets.</div>
+                {% endfor %}
+            </div>
+        </article>
+        {% empty %}
+        <article class="soft-card">No annotators found.</article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

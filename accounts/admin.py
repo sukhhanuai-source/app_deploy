@@ -48,9 +48,15 @@ class ProjectAdmin(admin.ModelAdmin):
 
 @admin.register(Label)
 class LabelAdmin(admin.ModelAdmin):
-    list_display = ['name', 'project', 'color']
-    list_filter = ['project']
+    list_display = ['name', 'get_projects', 'color']
+    list_filter = ['projects']
     search_fields = ['name']
+    filter_horizontal = ['projects']
+
+    def get_projects(self, obj):
+        return ", ".join(obj.projects.order_by('name').values_list('name', flat=True)) or "-"
+
+    get_projects.short_description = 'Projects'
 
 
 @admin.register(AnnotatorBucketAssignment)

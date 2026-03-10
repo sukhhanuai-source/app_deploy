@@ -22,6 +22,12 @@ class AccountsFlowTests(TestCase):
             organization=organization,
         )
 
+    def _create_label(self, name, project=None, color="#FF5733"):
+        label = Label.objects.create(name=name, color=color)
+        if project:
+            label.projects.add(project)
+        return label
+
     def _bucket_progress_payload(self, **overrides):
         payload = {
             "version": 1,
@@ -106,8 +112,8 @@ class AccountsFlowTests(TestCase):
             owner=owner_profile,
             organization=organization,
         )
-        Label.objects.create(project=project, name="pothole")
-        Label.objects.create(project=project, name="crack")
+        self._create_label("pothole", project=project)
+        self._create_label("crack", project=project)
 
         profile = CustomUser.objects.create(
             django_user=user,
@@ -212,13 +218,95 @@ class AccountsFlowTests(TestCase):
             reverse("assigner_dash"),
             {
                 "action": "create_label",
-                "project_id": project.id,
-                "label_name": "patch",
+                "project_ids": [str(project.id)],
+                "label_name": "CUSTOM_PATCH_ZONE",
                 "label_color": "#123456",
             },
         )
         self.assertEqual(response.status_code, 302)
-        self.assertTrue(Label.objects.filter(project=project, name="patch", color="#123456").exists())
+        label = Label.objects.get(name="CUSTOM_PATCH_ZONE")
+        self.assertEqual(label.color, "#123456")
+        self.assertEqual(list(label.projects.values_list("id", flat=True)), [project.id])
+
+    def test_assigner_can_link_one_label_to_multiple_projects(self):
+        assigner_user = User.objects.create_user(username="assigner_multi", password="Pass12345!")
+        assigner_profile = CustomUser.objects.create(
+            django_user=assigner_user,
+            role=CustomUser.ROLE_ASSIGNER,
+            is_verified=True,
+        )
+        project_a = self._create_project(
+            assigner_profile,
+            name="Surface Damage A",
+            organization_name="assigner-multi-org",
+        )
+        project_b = Project.objects.create(
+            name="Surface Damage B",
+            description="",
+            owner=assigner_profile,
+            organization=project_a.organization,
+        )
+
+        self.client.force_login(assigner_user)
+        response = self.client.post(
+            reverse("assigner_dash"),
+            {
+                "action": "create_label",
+                "project_ids": [str(project_a.id), str(project_b.id)],
+                "label_name": "ROAD_OBSTRUCTION_MULTI",
+                "label_color": "#654321",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        label = Label.objects.get(name="ROAD_OBSTRUCTION_MULTI")
+        self.assertEqual(label.color, "#654321")
+        self.assertEqual(
+            set(label.projects.values_list("id", flat=True)),
+            {project_a.id, project_b.id},
+        )
+
+    def test_assigner_can_edit_label_after_assignment(self):
+        assigner_user = User.objects.create_user(username="assigner_edit", password="Pass12345!")
+        assigner_profile = CustomUser.objects.create(
+            django_user=assigner_user,
+            role=CustomUser.ROLE_ASSIGNER,
+            is_verified=True,
+        )
+        project_a = self._create_project(
+            assigner_profile,
+            name="Project A",
+            organization_name="assigner-edit-org",
+        )
+        project_b = Project.objects.create(
+            name="Project B",
+            description="",
+            owner=assigner_profile,
+            organization=project_a.organization,
+        )
+        label = self._create_label("ROAD_EDGE_CUSTOM", project=project_a, color="#111111")
+
+        self.client.force_login(assigner_user)
+        response = self.client.post(
+            reverse("assigner_dash"),
+            {
+                "action": "edit_label",
+                "label_id": str(label.id),
+                "project_ids": [str(project_b.id)],
+                "label_name": "CUSTOM_EDGE_MARKING",
+                "label_color": "#222222",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        label.refresh_from_db()
+        self.assertEqual(label.name, "CUSTOM_EDGE_MARKING")
+        self.assertEqual(label.color, "#222222")
+        self.assertEqual(list(label.projects.values_list("id", flat=True)), [project_b.id])
+
+    def test_default_labels_are_seeded(self):
+        self.assertTrue(Label.objects.filter(name="FADED_KERB").exists())
+        self.assertTrue(Label.objects.filter(name="WATER_LOGGING").exists())
 
     def test_admin_dashboard_renders_bucket_progress(self):
         admin_user = User.objects.create_user(username="admin_progress", password="Pass12345!")
@@ -512,13 +600,13 @@ class AccountsFlowTests(TestCase):
             reverse("admin_dash"),
             {
                 "action": "create_label",
-                "project_id": project.id,
+                "project_ids": [str(project.id)],
                 "label_name": "damage",
                 "label_color": "#abcdef",
             },
         )
         self.assertEqual(response.status_code, 302)
-        self.assertTrue(Label.objects.filter(project=project, name="damage").exists())
+        self.assertTrue(Label.objects.filter(name="damage", projects=project).exists())
 
         response = self.client.post(
             reverse("admin_dash"),

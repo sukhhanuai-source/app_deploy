@@ -1,0 +1,622 @@
+{% extends base_template %}
+{% block dashboard_content %}
+
+<style>
+    /* Content card styling */
+    .content-card {
+        background: var(--panel);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 1px solid var(--line);
+        box-shadow: 0 4px 12px rgba(18, 43, 51, 0.04);
+    }
+
+    .content-card__header {
+        margin-bottom: 20px;
+    }
+
+    .content-card__title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--text);
+        margin: 0 0 4px 0;
+    }
+
+    .content-card__hint {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin: 0;
+    }
+
+    /* Pill checkbox styling */
+    .pill-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        border: 1px solid var(--line);
+        border-radius: 30px;
+        background: var(--panel-strong);
+        box-shadow: 0 2px 8px rgba(18, 43, 51, 0.04);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 14px;
+        color: var(--text);
+        line-height: 1.4;
+        white-space: nowrap;
+    }
+
+    .pill-check:hover {
+        transform: translateY(-1px);
+        border-color: var(--primary);
+        box-shadow: 0 4px 12px rgba(18, 43, 51, 0.08);
+    }
+
+    .pill-check:has(input:checked) {
+        border-color: var(--primary);
+        background: color-mix(in srgb, var(--primary) 8%, var(--panel-strong));
+    }
+
+    .pill-check .chk-compact {
+        margin: 0;
+        width: 12px;
+        height: 12px;
+        cursor: pointer;
+        accent-color: var(--primary);
+        flex-shrink: 0;
+    }
+
+    /* Card grid layouts - for 2-3 labels per row */
+    .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+        gap: 16px;
+        margin-top: 8px;
+    }
+
+    .chip-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+    }
+
+    /* Soft card styling */
+    .soft-card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        padding: 20px;
+        box-shadow: 0 4px 12px rgba(18, 43, 51, 0.04);
+        transition: all 0.2s ease;
+        width: 100%;
+        height: fit-content;
+    }
+
+    .soft-card:hover {
+        box-shadow: 0 8px 24px rgba(18, 43, 51, 0.08);
+    }
+
+    /* Label header styling - fixed first row */
+    .label-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--line);
+    }
+
+    .label-name-input {
+        flex: 1;
+        font-weight: 600;
+        font-size: 1.1rem;
+        border: 1px solid transparent;
+        background: transparent;
+        padding: 6px 10px;
+        border-radius: var(--radius-sm);
+        transition: all 0.2s ease;
+    }
+
+    .label-name-input:hover {
+        border-color: var(--line);
+        background: white;
+    }
+
+    .label-name-input:focus {
+        border-color: var(--primary);
+        background: white;
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(13, 138, 114, 0.1);
+    }
+
+    /* Color display - second row with editable circle */
+    .color-display {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+        padding: 8px 12px;
+        background: color-mix(in srgb, var(--primary) 4%, var(--panel));
+        border-radius: var(--radius-md);
+        position: relative;
+    }
+
+    .color-circle-wrapper {
+        position: relative;
+        cursor: pointer;
+    }
+
+    .color-circle {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        flex-shrink: 0;
+        transition: transform 0.2s ease;
+    }
+
+    .color-circle-wrapper:hover .color-circle {
+        transform: scale(1.1);
+    }
+
+    .color-circle-wrapper:hover::after {
+        content: "✎";
+        position: absolute;
+        top: -8px;
+        right: -8px;
+        background: var(--primary);
+        color: white;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: bold;
+        border: 2px solid white;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .color-code {
+        font-family: 'Space Grotesk', monospace;
+        font-size: 0.9rem;
+        color: var(--text);
+        background: white;
+        padding: 4px 10px;
+        border-radius: 20px;
+        border: 1px solid var(--line);
+    }
+
+    .color-input-wrapper {
+        margin-left: auto;
+        position: relative;
+    }
+
+    .color-input-wrapper input[type="color"] {
+        width: 40px;
+        height: 40px;
+        padding: 2px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        opacity: 0.8;
+        transition: opacity 0.2s ease;
+    }
+
+    .color-input-wrapper input[type="color"]:hover {
+        opacity: 1;
+    }
+
+    /* Hidden color input for circle editing */
+    .circle-color-input {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+    }
+
+    /* Create label section styles */
+    .create-label-container {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .create-label-input-group {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex: 1;
+        max-width: 400px;
+    }
+
+    .create-label-input {
+        width: 100%;
+        padding: 12px 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
+        background: white;
+    }
+
+    .create-label-input:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(13, 138, 114, 0.1);
+    }
+
+    .create-label-color-preview {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .create-color-circle {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        cursor: pointer;
+        transition: transform 0.2s ease;
+    }
+
+    .create-color-circle:hover {
+        transform: scale(1.1);
+    }
+
+    .create-color-input {
+        width: 0;
+        height: 0;
+        opacity: 0;
+        position: absolute;
+    }
+
+    .create-label-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    /* Form grid layouts */
+    .form-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+    }
+
+    .form-grid--two {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .field-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .field-label {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: var(--text);
+        letter-spacing: 0.02em;
+    }
+
+    /* Input styling */
+    input[type="text"] {
+        width: 100%;
+        padding: 10px 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
+        background: white;
+    }
+
+    input[type="text"]:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(13, 138, 114, 0.1);
+    }
+
+    /* Badge styling */
+    .badge-soft {
+        background: color-mix(in srgb, var(--primary) 10%, white);
+        color: var(--primary-dark);
+        padding: 4px 10px;
+        border-radius: 30px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent);
+    }
+
+    /* Flex utilities */
+    .d-flex {
+        display: flex;
+    }
+
+    .justify-content-between {
+        justify-content: space-between;
+    }
+
+    .align-items-center {
+        align-items: center;
+    }
+
+    /* Spacing utilities */
+    .mt-2 {
+        margin-top: 12px;
+    }
+
+    .mt-3 {
+        margin-top: 16px;
+    }
+
+    .mt-4 {
+        margin-top: 24px;
+    }
+
+    .mb-2 {
+        margin-bottom: 12px;
+    }
+
+    .w-100 {
+        width: 100%;
+    }
+
+    .text-center {
+        text-align: center;
+    }
+
+    .mb-0 {
+        margin-bottom: 0;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .content-card {
+            padding: 16px;
+        }
+
+        .form-grid--two {
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+
+        .card-grid {
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+
+        .pill-check {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        .pill-check .chk-compact {
+            width: 16px;
+            height: 16px;
+        }
+
+        .soft-card {
+            padding: 16px;
+        }
+
+        .label-header {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 8px;
+        }
+
+        .color-display {
+            flex-wrap: wrap;
+        }
+
+        .create-label-container {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .create-label-input-group {
+            max-width: 100%;
+        }
+    }
+
+    /* Tablet adjustments */
+    @media (min-width: 769px) and (max-width: 1024px) {
+        .content-card {
+            padding: 20px;
+        }
+
+        .card-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
+
+<section class="content-card">
+    <div class="content-card__header">
+        <div>
+            <h2 class="content-card__title">{{ page_title }}</h2>
+            <p class="content-card__hint">Create labels and attach them with projects.</p>
+        </div>
+    </div>
+    
+    <form method="post" class="form-grid">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_label">
+        
+        <div class="field-group">
+            <label class="field-label">Projects</label>
+            <div class="card-grid" style="display: flex; flex-wrap: wrap; gap: 12px;">
+                {% for project in projects %}
+                <label class="pill-check">
+                    <input class="chk-compact" 
+                           type="checkbox" 
+                           name="project_ids" 
+                           value="{{ project.id }}">
+                    {{ project.name }}
+                </label>
+                {% empty %}
+                <div class="soft-card">No projects available.</div>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <!-- Updated Create Label Section with Circle Color Picker -->
+        <div class="create-label-container">
+            <div class="create-label-input-group">
+                <input type="text" 
+                       name="label_name" 
+                       class="create-label-input" 
+                       required 
+                       placeholder="Enter label name (e.g., Important, Review, Done)">
+                
+                <div class="create-label-color-preview">
+                    <div class="create-color-circle" 
+                         id="create-color-circle"
+                         style="background-color: {{ default_label_color|default:'#0d8a72' }};"
+                         onclick="document.getElementById('create-color-input').click();"></div>
+                    <input type="color" 
+                           id="create-color-input"
+                           name="label_color" 
+                           class="create-color-input"
+                           value="{{ default_label_color|default:'#0d8a72' }}"
+                           onchange="document.getElementById('create-color-circle').style.backgroundColor = this.value;">
+                </div>
+            </div>
+            
+            <div class="create-label-actions">
+                <button type="submit" class="btn btn-primary">Create Label</button>
+            </div>
+        </div>
+    </form>
+</section>
+
+<section class="content-card">
+    <div class="content-card__header">
+        <div>
+            <h2 class="content-card__title">Existing Labels</h2>
+            <p class="content-card__hint">Click the color circle to edit the color</p>
+        </div>
+    </div>
+    
+    <form method="post" class="form-grid" id="labels-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="bulk_update_labels">
+        
+        <div class="card-grid">
+            {% for label in labels %}
+            <article class="soft-card">
+                <input type="hidden" name="label_ids" value="{{ label.id }}">
+                
+                <!-- First Row: Editable Label Name -->
+                <div class="label-header">
+                    <input type="text" 
+                           class="label-name-input" 
+                           name="label_name_{{ label.id }}" 
+                           value="{{ label.name }}" 
+                           placeholder="Label name">
+                </div>
+
+                <!-- Second Row: Color Display with Editable Circle -->
+                <div class="color-display">
+                    <div class="color-circle-wrapper">
+                        <div class="color-circle" style="background-color: {{ label.color }};" 
+                             onclick="document.getElementById('color-input-{{ label.id }}').click();"></div>
+                        <input type="color" 
+                               id="color-input-{{ label.id }}"
+                               name="label_color_{{ label.id }}" 
+                               value="{{ label.color }}" 
+                               class="circle-color-input"
+                               onchange="const wrap=this.closest('.color-display');wrap.querySelector('.color-circle').style.backgroundColor=this.value;wrap.querySelector('.color-code').textContent=this.value;">
+                    </div>
+                    <span class="color-code">{{ label.color }}</span>
+                </div>
+
+                <!-- Third Row: Attach Projects (Checkboxes) -->
+                <div class="field-group mt-2">
+                    <label class="field-label">Attach Projects</label>
+                    <div class="chip-grid">
+                        {% for project in projects %}
+                        <label class="pill-check">
+                            <input class="chk-compact" 
+                                   type="checkbox" 
+                                   name="project_ids_{{ label.id }}" 
+                                   value="{{ project.id }}" 
+                                   {% if project in label.projects.all %}checked{% endif %}>
+                            {{ project.name }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </article>
+            {% empty %}
+            <article class="soft-card">
+                <p class="text-center mb-0" style="color: var(--muted);">No labels yet. Create your first label above.</p>
+            </article>
+            {% endfor %}
+        </div>
+
+        {% if labels %}
+        <div class="mt-4">
+            <button type="submit" class="btn btn-primary w-100">Save All Changes</button>
+        </div>
+        {% endif %}
+    </form>
+</section>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle existing labels color circles
+    document.querySelectorAll('.color-circle-wrapper').forEach(wrapper => {
+        const circle = wrapper.querySelector('.color-circle');
+        const hiddenInput = wrapper.querySelector('input[type="color"]');
+        
+        if (circle && hiddenInput) {
+            circle.addEventListener('click', function() {
+                hiddenInput.click();
+            });
+            
+            hiddenInput.addEventListener('change', function() {
+                circle.style.backgroundColor = this.value;
+                const colorDisplay = this.closest('.color-display');
+                if (colorDisplay) {
+                    const colorCode = colorDisplay.querySelector('.color-code');
+                    if (colorCode) colorCode.textContent = this.value;
+                }
+            });
+        }
+    });
+
+    // Handle create label color circle
+    const createColorCircle = document.getElementById('create-color-circle');
+    const createColorInput = document.getElementById('create-color-input');
+    
+    if (createColorCircle && createColorInput) {
+        createColorCircle.addEventListener('click', function() {
+            createColorInput.click();
+        });
+        
+        createColorInput.addEventListener('change', function() {
+            createColorCircle.style.backgroundColor = this.value;
+        });
+    }
+});
+</script>
+
+{% endblock %}

@@ -1,325 +1,48 @@
-{% extends 'base.html' %}
-
-{% block title %}Sign Up | Hanu AI Annotation{% endblock %}
-
-{% block content %}
-<div class="row g-0 align-items-stretch min-vh-75">
-    <div class="col-lg-6 d-none d-lg-flex flex-column justify-content-center p-5"
-         style="background: linear-gradient(135deg, rgba(13, 138, 114, 0.05), rgba(240, 180, 77, 0.05)); border-radius: var(--radius-xl) 0 0 var(--radius-xl);">
-        <div class="mb-5">
-            <span class="badge bg-success bg-opacity-10 text-success mb-3">Hanu AI Annotation</span>
-            <h2 class="display-5 fw-bold mb-4">Create Your Annotation Workspace Access</h2>
-            <p class="lead mb-5" style="color: var(--muted); max-width: 90%;">
-                Register annotators, reviewers, and operations teams into one controlled data labeling workflow.
-            </p>
-        </div>
-
-        <div class="row g-4">
-            <div class="col-6">
-                <div class="d-flex align-items-center gap-3 mb-4 feature-item">
-                    <div class="bg-success bg-opacity-10 p-3 rounded-circle">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color: var(--primary);">
-                            <path d="M12 20h9" stroke-width="2" stroke-linecap="round"/>
-                            <path d="M12 4h9" stroke-width="2" stroke-linecap="round"/>
-                            <path d="M4 9h16" stroke-width="2" stroke-linecap="round"/>
-                            <path d="M4 15h16" stroke-width="2" stroke-linecap="round"/>
-                        </svg>
-                    </div>
-                    <div>
-                        <h6 class="fw-bold mb-1">Structured Projects</h6>
-                        <small class="surface-note">Projects, labels, and review flow</small>
-                    </div>
-                </div>
-                <div class="d-flex align-items-center gap-3 feature-item">
-                    <div class="bg-success bg-opacity-10 p-3 rounded-circle">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color: var(--primary);">
-                            <path d="M4 6h16v12H4z" stroke-width="2"/>
-                            <path d="M8 10h8" stroke-width="2" stroke-linecap="round"/>
-                            <path d="M8 14h5" stroke-width="2" stroke-linecap="round"/>
-                        </svg>
-                    </div>
-                    <div>
-                        <h6 class="fw-bold mb-1">Image And Video</h6>
-                        <small class="surface-note">One platform for both media types</small>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6">
-                <div class="d-flex align-items-center gap-3 mb-4 feature-item">
-                    <div class="bg-success bg-opacity-10 p-3 rounded-circle">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color: var(--primary);">
-                            <path d="M3 7l9-4 9 4-9 4-9-4z" stroke-width="2" stroke-linejoin="round"/>
-                            <path d="M3 17l9 4 9-4" stroke-width="2" stroke-linejoin="round"/>
-                            <path d="M3 12l9 4 9-4" stroke-width="2" stroke-linejoin="round"/>
-                        </svg>
-                    </div>
-                    <div>
-                        <h6 class="fw-bold mb-1">S3 Data Access</h6>
-                        <small class="surface-note">Assigned bucket paths per annotator</small>
-                    </div>
-                </div>
-                <div class="d-flex align-items-center gap-3 feature-item">
-                    <div class="bg-success bg-opacity-10 p-3 rounded-circle">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color: var(--primary);">
-                            <path d="M9 11l3 3L22 4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" stroke-width="2" stroke-linecap="round"/>
-                        </svg>
-                    </div>
-                    <div>
-                        <h6 class="fw-bold mb-1">Controlled Approval</h6>
-                        <small class="surface-note">Accounts remain pending until verified</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="mt-5 pt-3">
-            <div class="d-flex align-items-center gap-4">
-                <div class="d-flex align-items-center gap-2">
-                    <span class="badge bg-white text-dark rounded-circle p-2">1</span>
-                    <span class="small">Sign up</span>
-                </div>
-                <div class="d-flex align-items-center gap-2">
-                    <span class="badge bg-white text-dark rounded-circle p-2">2</span>
-                    <span class="small">Admin verifies</span>
-                </div>
-                <div class="d-flex align-items-center gap-2">
-                    <span class="badge bg-white text-dark rounded-circle p-2">3</span>
-                    <span class="small">Start annotation</span>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-lg-6">
-        <div class="p-4 p-xl-5" style="background: white; border-radius: 0 var(--radius-xl) var(--radius-xl) 0; min-height: 750px;">
-            <div class="auth-form w-100" style="max-width: 460px; margin: 0 auto;">
-                <div class="text-center mb-4">
-                    <div class="d-lg-none mb-3">
-                        <span class="badge bg-success bg-opacity-10 text-success mb-2">Hanu AI Annotation</span>
-                    </div>
-                    <h2 class="mb-2">Create account</h2>
-                    <p class="surface-note mb-0">Register to join the annotation workflow</p>
-                </div>
-
-                <form method="post">
-                    {% csrf_token %}
-                    <input type="hidden" name="user_type" value="worker">
-
-                    <div class="mb-3">
-                        <label class="form-label fw-medium">Username</label>
-                        {{ form.username }}
-                        {% if form.username.errors %}
-                            <div class="text-danger small mt-1">{{ form.username.errors }}</div>
-                        {% endif %}
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-medium">Email</label>
-                        {{ form.email }}
-                        {% if form.email.errors %}
-                            <div class="text-danger small mt-1">{{ form.email.errors }}</div>
-                        {% endif %}
-                    </div>
-
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label class="form-label fw-medium">First Name</label>
-                                {{ form.first_name }}
-                                {% if form.first_name.errors %}
-                                    <div class="text-danger small mt-1">{{ form.first_name.errors }}</div>
-                                {% endif %}
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label class="form-label fw-medium">Last Name</label>
-                                {{ form.last_name }}
-                                {% if form.last_name.errors %}
-                                    <div class="text-danger small mt-1">{{ form.last_name.errors }}</div>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-medium">Phone Number</label>
-                        {{ form.phone_number }}
-                        {% if form.phone_number.errors %}
-                            <div class="text-danger small mt-1">{{ form.phone_number.errors }}</div>
-                        {% endif %}
-                        <div class="form-text">Optional</div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-medium">Password</label>
-                        {{ form.password1 }}
-                        {% if form.password1.errors %}
-                            <div class="text-danger small mt-1">{{ form.password1.errors }}</div>
-                        {% endif %}
-                        <div class="form-text mt-2">
-                            Minimum 8 characters. Avoid common or fully numeric passwords.
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-medium">Confirm Password</label>
-                        {{ form.password2 }}
-                        {% if form.password2.errors %}
-                            <div class="text-danger small mt-1">{{ form.password2.errors }}</div>
-                        {% endif %}
-                    </div>
-
-                    <div class="d-grid gap-2 mt-4">
-                        <button type="submit" class="btn btn-primary btn-lg">Create Workspace Access</button>
-                    </div>
-                </form>
-
-                <div class="mt-4 text-center">
-                    <p class="mb-0">
-                        Already have an account? <a href="{% url 'login' %}" class="footer-link">Sign in</a>
-                    </p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="d-lg-none">
-    <div class="auth-form">
-        <div class="text-center mb-4">
-            <div class="text-uppercase fw-bold small text-success mb-2" style="letter-spacing:0.14em;">Hanu AI Annotation</div>
-            <h2 class="mb-2">Create account</h2>
-            <p class="surface-note mb-0">Register your account to enter annotation and review workflows.</p>
-        </div>
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signup</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { margin: 0; font-family: 'IBM Plex Sans', sans-serif; min-height: 100vh; display: grid; place-items: center; background: linear-gradient(135deg, #0f1720, #163b46); color: #17323a; }
+        .auth-shell { width: min(1180px, calc(100% - 24px)); display: grid; grid-template-columns: 1fr 1fr; background: #fff; border-radius: 28px; overflow: hidden; box-shadow: 0 25px 60px rgba(0,0,0,0.18); }
+        .auth-side { padding: 48px; background: linear-gradient(160deg, rgba(15,123,108,0.12), rgba(240,180,77,0.15)); }
+        .auth-form { padding: 40px; }
+        .auth-form input { width: 100%; min-height: 48px; padding: 12px 14px; border-radius: 14px; border: 1px solid #d6e2e7; }
+        .auth-form a { color: #0f7b6c; }
+        @media (max-width: 900px) { .auth-shell { grid-template-columns: 1fr; } .auth-side { display: none; } .auth-form { padding: 28px; } }
+    </style>
+</head>
+<body>
+<div class="auth-shell">
+    <section class="auth-side">
+        <div class="text-uppercase small fw-bold mb-3" style="letter-spacing:.16em;color:#0f7b6c;">Hanu AI Annotation</div>
+        <h1 class="display-5 fw-bold mb-3" style="font-family:'Space Grotesk',sans-serif;">Create your account</h1>
+        <p class="text-muted">Signup stays separate from the dashboard base so the auth flow is clean.</p>
+    </section>
+    <section class="auth-form">
+        {% if messages %}{% for message in messages %}<div class="alert alert-info">{{ message }}</div>{% endfor %}{% endif %}
+        <h2 class="mb-3" style="font-family:'Space Grotesk',sans-serif;">Create account</h2>
         <form method="post">
             {% csrf_token %}
-            <input type="hidden" name="user_type" value="worker">
-
-            <div class="mb-3">
-                <label class="form-label">Username</label>
-                {{ form.username }}
-                {% if form.username.errors %}
-                    <div class="text-danger small mt-1">{{ form.username.errors }}</div>
-                {% endif %}
-            </div>
-
-            <div class="mb-3">
-                <label class="form-label">Email</label>
-                {{ form.email }}
-                {% if form.email.errors %}
-                    <div class="text-danger small mt-1">{{ form.email.errors }}</div>
-                {% endif %}
-            </div>
-
+            <div class="mb-3"><label class="form-label">Username</label>{{ form.username }}</div>
+            <div class="mb-3"><label class="form-label">Email</label>{{ form.email }}</div>
             <div class="row">
-                <div class="col-6">
-                    <div class="mb-3">
-                        <label class="form-label">First Name</label>
-                        {{ form.first_name }}
-                    </div>
-                </div>
-                <div class="col-6">
-                    <div class="mb-3">
-                        <label class="form-label">Last Name</label>
-                        {{ form.last_name }}
-                    </div>
-                </div>
+                <div class="col-md-6 mb-3"><label class="form-label">First name</label>{{ form.first_name }}</div>
+                <div class="col-md-6 mb-3"><label class="form-label">Last name</label>{{ form.last_name }}</div>
             </div>
-
-            <div class="mb-3">
-                <label class="form-label">Phone Number</label>
-                {{ form.phone_number }}
-            </div>
-
-            <div class="mb-3">
-                <label class="form-label">Password</label>
-                {{ form.password1 }}
-                {% if form.password1.errors %}
-                    <div class="text-danger small mt-1">{{ form.password1.errors }}</div>
-                {% endif %}
-            </div>
-
-            <div class="mb-3">
-                <label class="form-label">Confirm Password</label>
-                {{ form.password2 }}
-                {% if form.password2.errors %}
-                    <div class="text-danger small mt-1">{{ form.password2.errors }}</div>
-                {% endif %}
-            </div>
-
-            <div class="d-grid gap-2">
-                <button type="submit" class="btn btn-primary btn-lg">Create Workspace Access</button>
-            </div>
+            <div class="mb-3"><label class="form-label">Phone</label>{{ form.phone_number }}</div>
+            <div class="mb-3"><label class="form-label">Password</label>{{ form.password1 }}</div>
+            <div class="mb-3"><label class="form-label">Confirm Password</label>{{ form.password2 }}</div>
+            <button type="submit" class="btn btn-primary w-100">Signup</button>
         </form>
-
-        <div class="mt-3 text-center">
-            <p class="mb-0">
-                Already have an account? <a href="{% url 'login' %}" class="footer-link">Sign in</a>
-            </p>
-        </div>
-    </div>
+        <div class="mt-3">Already have account? <a href="{% url 'login' %}">Login</a></div>
+    </section>
 </div>
-
-<style>
-    .min-vh-75 {
-        min-height: 75vh;
-    }
-
-    .feature-item {
-        transition: transform 0.2s ease;
-    }
-
-    .feature-item:hover {
-        transform: translateX(5px);
-    }
-
-    .feature-item .rounded-circle {
-        transition: all 0.3s ease;
-    }
-
-    .feature-item:hover .rounded-circle {
-        background-color: rgba(13, 138, 114, 0.15) !important;
-        transform: scale(1.05);
-    }
-
-    .auth-form input[type="text"],
-    .auth-form input[type="password"],
-    .auth-form input[type="email"],
-    .auth-form input[type="tel"] {
-        width: 100%;
-        padding: 12px 16px;
-        border: 1px solid var(--line);
-        border-radius: var(--radius-md);
-        font-size: 1rem;
-        transition: all 0.2s ease;
-        background: white;
-    }
-
-    .auth-form input:focus {
-        border-color: var(--primary);
-        box-shadow: 0 0 0 0.25rem rgba(13, 138, 114, 0.15);
-        outline: none;
-    }
-
-    @media (max-width: 991px) {
-        .row.g-0.align-items-stretch {
-            display: none;
-        }
-    }
-
-    @media (min-width: 992px) {
-        .d-lg-none {
-            display: none !important;
-        }
-    }
-
-    @media (max-width: 1200px) {
-        .p-xl-5 {
-            padding: 2rem !important;
-        }
-    }
-</style>
-{% endblock %}
+</body>
+</html>

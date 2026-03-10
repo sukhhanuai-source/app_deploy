@@ -1,0 +1,61 @@
+{% extends base_template %}
+{% block dashboard_content %}
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">{{ page_title }}</h2><p class="content-card__hint">Select project, annotater, and date to display data.</p></div></div>
+    <form method="get" class="form-grid form-grid--four">
+        <div class="field-group">
+            <label class="field-label">Project</label>
+            <select name="project_id">
+                <option value="">Select project</option>
+                {% for project in review_projects %}
+                <option value="{{ project.id }}" {% if selected_project_id == project.id|stringformat:"s" %}selected{% endif %}>{{ project.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field-group">
+            <label class="field-label">Annotater</label>
+            <select name="annotator_id">
+                <option value="">Select annotater</option>
+                {% for annotator in review_annotators %}
+                <option value="{{ annotator.id }}" {% if selected_annotator_id == annotator.id|stringformat:"s" %}selected{% endif %}>{{ annotator.django_user.username }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field-group">
+            <label class="field-label">Date</label>
+            <input type="date" name="review_date" value="{{ selected_review_date }}">
+        </div>
+        <div class="field-group">
+            <label class="field-label">&nbsp;</label>
+            <button type="submit" class="btn btn-primary">Display Data</button>
+        </div>
+    </form>
+</section>
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">Data Preview</h2></div></div>
+    <div class="card-grid">
+        {% for item in review_items %}
+        <article class="soft-card">
+            <img src="{{ item.preview_url }}" alt="{{ item.file_name }}" style="width:100%;border-radius:14px;margin-bottom:12px;">
+            <strong>{{ item.file_name }}</strong>
+            <div class="mt-2"><code>{{ item.key }}</code></div>
+            <div class="mt-3 d-flex gap-2 flex-wrap">
+                <a href="{{ item.preview_url }}" target="_blank" class="btn btn-outline-primary">Open</a>
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="delete_review_json">
+                    <input type="hidden" name="review_key" value="{{ item.key }}">
+                    <input type="hidden" name="project_id" value="{{ selected_project_id }}">
+                    <input type="hidden" name="annotator_id" value="{{ selected_annotator_id }}">
+                    <input type="hidden" name="review_date" value="{{ selected_review_date }}">
+                    <input type="hidden" name="page" value="{% if review_page_obj %}{{ review_page_obj.number }}{% else %}1{% endif %}">
+                    <button type="submit" class="btn btn-outline-danger">Delete</button>
+                </form>
+            </div>
+        </article>
+        {% empty %}
+        <article class="soft-card">No annotated data found for the selected filters.</article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

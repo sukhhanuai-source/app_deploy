@@ -1,0 +1,23 @@
+{% extends base_template %}
+{% block dashboard_content %}
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">{{ page_title }}</h2><p class="content-card__hint">Create project and view existing projects.</p></div></div>
+    <form method="post" class="form-grid">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_project">
+        <div class="field-group"><label class="field-label">Project Name</label><input name="project_name" required></div>
+        <div class="field-group"><label class="field-label">Description</label><textarea name="project_description"></textarea></div>
+        <div><button type="submit" class="btn btn-primary">Create Project</button></div>
+    </form>
+</section>
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">Projects</h2></div></div>
+    <div class="card-grid">
+        {% for project in projects %}
+        <article class="soft-card"><strong>{{ project.name }}</strong><div class="mt-2 text-muted small">{{ project.description|default:"No description" }}</div></article>
+        {% empty %}
+        <article class="soft-card">No project created yet.</article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

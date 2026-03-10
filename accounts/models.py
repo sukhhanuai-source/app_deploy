@@ -97,18 +97,15 @@ class Project(models.Model):
 
 
 class Label(models.Model):
-    name = models.CharField(max_length=100)
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='labels')
+    name = models.CharField(max_length=100, unique=True)
+    projects = models.ManyToManyField(Project, related_name='labels', blank=True)
     color = models.CharField(max_length=20, default='#FF5733')
 
     def __str__(self):
-        return f"{self.project.name}: {self.name}"
+        return self.name
 
     class Meta:
         ordering = ['name']
-        constraints = [
-            models.UniqueConstraint(fields=['project', 'name'], name='uniq_label_name_per_project')
-        ]
 
 
 class AnnotatorBucketAssignment(models.Model):
