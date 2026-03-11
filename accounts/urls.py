@@ -45,4 +45,5 @@ urlpatterns = [
     path('api/organizations', views.api_organizations_view, name='api_organizations'),
     path('api/projects', views.api_projects_view, name='api_projects'),
     path('api/labels', views.api_labels_view, name='api_labels'),
+    
 ]
