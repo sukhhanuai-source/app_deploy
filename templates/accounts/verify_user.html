@@ -1,0 +1,407 @@
+{% extends base_template %}
+{% block dashboard_content %}
+
+<style>
+    /* Content card styling */
+    .content-card {
+        background: var(--panel);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 1px solid var(--line);
+        box-shadow: 0 4px 12px rgba(18, 43, 51, 0.04);
+    }
+
+    .content-card__header {
+        margin-bottom: 20px;
+    }
+
+    .content-card__title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--text);
+        margin: 0 0 4px 0;
+    }
+
+    .content-card__hint {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin: 0;
+    }
+
+    /* Table styling */
+    .dashboard-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .dashboard-table th {
+        text-align: left;
+        padding: 12px 8px;
+        font-weight: 600;
+        color: var(--text);
+        border-bottom: 2px solid var(--line);
+    }
+
+    .dashboard-table td {
+        padding: 16px 8px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: middle;
+    }
+
+    /* Form grid layouts */
+    .form-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .form-grid--four {
+        display: grid;
+        grid-template-columns: 1.5fr 1.5fr 1fr 0.8fr auto;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .field-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .field-label {
+        font-weight: 600;
+        font-size: 0.8rem;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+    }
+
+    /* Input styling */
+    input[type="text"], 
+    input[type="email"],
+    select {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        font-size: 0.9rem;
+        background: white;
+    }
+
+    input:disabled {
+        background: var(--panel-strong);
+        color: var(--muted);
+        border-color: var(--line);
+        opacity: 0.8;
+    }
+
+    /* Checkbox styling */
+    .checkbox-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 0;
+    }
+
+    .checkbox-wrapper input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+        accent-color: var(--primary);
+        margin: 0;
+    }
+
+    .checkbox-wrapper label {
+        font-size: 0.9rem;
+        color: var(--text);
+        cursor: pointer;
+    }
+
+    /* Small button styling */
+    .btn-small {
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        border-radius: var(--radius-sm);
+        background: white;
+        border: 1px solid var(--line);
+        color: var(--text);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        white-space: nowrap;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .btn-small:hover {
+        border-color: var(--primary);
+        background: color-mix(in srgb, var(--primary) 4%, white);
+    }
+
+    .btn-primary-small {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: white;
+    }
+
+    .btn-primary-small:hover {
+        background: var(--primary-dark);
+        border-color: var(--primary-dark);
+    }
+
+    .btn-save {
+        padding: 10px 24px;
+        font-size: 0.95rem;
+        font-weight: 500;
+    }
+
+    /* Save button container */
+    .save-all-container {
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 2px solid var(--line);
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    /* User row styling */
+    .user-row {
+        background: var(--panel);
+        border-radius: var(--radius-md);
+        margin-bottom: 8px;
+        border: 1px solid var(--line);
+        transition: all 0.2s ease;
+    }
+
+    .user-row:hover {
+        border-color: var(--primary-light);
+        box-shadow: 0 2px 8px rgba(18, 43, 51, 0.04);
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 1024px) {
+        .form-grid--four {
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+
+        .dashboard-table td {
+            padding: 12px 4px;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .content-card {
+            padding: 16px;
+        }
+
+        .dashboard-table th {
+            display: none;
+        }
+
+        .dashboard-table td {
+            display: block;
+            padding: 8px;
+        }
+
+        .form-grid--four {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+    }
+
+    /* Badge styling */
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 8px;
+        border-radius: 30px;
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+
+    .badge-verified {
+        background: color-mix(in srgb, var(--success) 10%, white);
+        color: var(--success-dark);
+        border: 1px solid color-mix(in srgb, var(--success) 20%, transparent);
+    }
+
+    .badge-unverified {
+        background: color-mix(in srgb, var(--warning) 10%, white);
+        color: var(--warning-dark);
+        border: 1px solid color-mix(in srgb, var(--warning) 20%, transparent);
+    }
+</style>
+
+<section class="content-card">
+    <div class="content-card__header">
+        <div>
+            <h2 class="content-card__title">{{ page_title }}</h2>
+            <p class="content-card__hint">Review updates across users, then apply everything with the single save button below.</p>
+        </div>
+    </div>
+
+    <form method="post" id="bulk-update-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="bulk_update_users">
+        
+        <div style="overflow:auto;">
+            <table class="dashboard-table">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Project</th>
+                        <th>URL Name</th>
+                        <th>Verified</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for profile in users %}
+                    <tr class="user-row">
+                        <td>
+                            <div class="field-group">
+                                <span class="field-label">Username</span>
+                                <input type="text" value="{{ profile.django_user.username }}" disabled>
+                                <input type="hidden" name="user_ids" value="{{ profile.id }}">
+                            </div>
+                        </td>
+                        <td>
+                            <div class="field-group">
+                                <span class="field-label">Email</span>
+                                <input type="email" value="{{ profile.django_user.email|default:'-' }}" disabled>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="field-group">
+                                <span class="field-label">Role</span>
+                                <select name="role_{{ profile.id }}" class="role-select">
+                                    {% for role_value, role_label in role_choices %}
+                                    <option value="{{ role_value }}" {% if profile.role == role_value %}selected{% endif %}>{{ role_label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="field-group">
+                                <span class="field-label">Project</span>
+                                <select name="assigned_project_{{ profile.id }}">
+                                    <option value="">-- None --</option>
+                                    {% for project in projects %}
+                                    <option value="{{ project.id }}" {% if profile.assigned_project_id == project.id %}selected{% endif %}>
+                                        {{ project.organization.name }} / {{ project.name }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="field-group">
+                                <span class="field-label">URL Name</span>
+                                <select name="url_resource_{{ profile.id }}" class="form-select form-select-sm annotator-url-field url-resource-select" {% if profile.role != 'annotator' %}disabled{% endif %}>
+                                    <option value="">-- Select URL --</option>
+                                    {% for resource in url_resources %}
+                                    <option value="{{ resource.id }}" {% if profile.annotator_url and profile.annotator_url.resource_id == resource.id %}selected{% endif %}>{{ resource.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="field-group">
+                                <span class="field-label">Verified</span>
+                                <div class="checkbox-wrapper">
+                                    <input type="checkbox" 
+                                           name="verified_{{ profile.id }}" 
+                                           id="verified_{{ profile.id }}"
+                                           {% if profile.is_verified %}checked{% endif %}
+                                           class="verified-checkbox">
+                                    <label for="verified_{{ profile.id }}">Verified</label>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 40px; color: var(--muted);">
+                            No users found.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Save All Button -->
+        <div class="save-all-container">
+            <button type="submit" class="btn btn-primary btn-save">
+                <span>💾</span> Save All Changes
+            </button>
+        </div>
+    </form>
+</section>
+
+<script>
+// Store original values for reset functionality
+const originalValues = {};
+
+function toggleAnnotatorUrlFields(selectEl) {
+    const row = selectEl.closest('tr');
+    const isAnnotator = selectEl.value === 'annotator';
+    row.querySelectorAll('.annotator-url-field').forEach((input) => {
+        input.disabled = !isAnnotator;
+        if (!isAnnotator) {
+            input.value = '';
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    {% for profile in users %}
+    // Store original values for each user
+    originalValues['{{ profile.id }}'] = {
+        role: document.querySelector('select[name="role_{{ profile.id }}"]').value,
+        verified: document.querySelector('input[name="verified_{{ profile.id }}"]').checked
+    };
+    {% endfor %}
+
+    document.querySelectorAll('.role-select').forEach((selectEl) => {
+        toggleAnnotatorUrlFields(selectEl);
+        selectEl.addEventListener('change', () => toggleAnnotatorUrlFields(selectEl));
+    });
+
+    document.querySelectorAll('.url-resource-select').forEach((selectEl) => {
+        // Enable/disable based on role; no manual fields to sync.
+        selectEl.addEventListener('change', () => {});
+    });
+});
+
+// Optional: Add confirmation for bulk save
+document.getElementById('bulk-update-form').addEventListener('submit', function(e) {
+    const changes = [];
+    
+    {% for profile in users %}
+    const currentRole = document.querySelector(`select[name="role_{{ profile.id }}"]`).value;
+    const currentVerified = document.querySelector(`input[name="verified_{{ profile.id }}"]`).checked;
+    const username = "{{ profile.django_user.username }}";
+    
+    if (originalValues['{{ profile.id }}']) {
+        if (currentRole !== originalValues['{{ profile.id }}'].role || 
+            currentVerified !== originalValues['{{ profile.id }}'].verified) {
+            changes.push(username);
+        }
+    }
+    {% endfor %}
+    
+    if (changes.length > 0) {
+        const message = `You're about to save changes for:\n- ${changes.join('\n- ')}\n\nProceed?`;
+        if (!confirm(message)) {
+            e.preventDefault();
+        }
+    }
+});
+</script>
+
+{% endblock %}

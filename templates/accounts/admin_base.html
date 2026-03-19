@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin Dashboard{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    {% include 'accounts/_role_base_styles.html' %}
+</head>
+<body>
+<div class="dashboard-app">
+    <aside class="dashboard-sidebar">
+        <div class="dashboard-brand">
+            <div class="dashboard-brand__eyebrow">Admin</div>
+            <h2 class="dashboard-brand__title">Operations Panel</h2>
+        </div>
+        <nav class="dashboard-nav">
+            <a href="{% url 'admin_home' %}" class="dashboard-nav__link {% if current_nav == 'home' %}is-active{% endif %}">Home</a>
+            <a href="{% url 'admin_verify_users' %}" class="dashboard-nav__link {% if current_nav == 'verify_users' %}is-active{% endif %}">Verify User</a>
+            <a href="{% url 'admin_create_project' %}" class="dashboard-nav__link {% if current_nav == 'create_project' %}is-active{% endif %}">Create Project</a>
+            <a href="{% url 'admin_create_labels' %}" class="dashboard-nav__link {% if current_nav == 'create_labels' %}is-active{% endif %}">Create Labels</a>
+            <a href="{% url 'admin_assign_tasks' %}" class="dashboard-nav__link {% if current_nav == 'assign_tasks' %}is-active{% endif %}">Assgine Tasks</a>
+            <a href="{% url 'admin_urls' %}" class="dashboard-nav__link {% if current_nav == 'urls' %}is-active{% endif %}">URL Library</a>
+            <a href="{% url 'admin_annotated_data' %}" class="dashboard-nav__link {% if current_nav == 'annotated_data' %}is-active{% endif %}">Anotated Data</a>
+        </nav>
+    </aside>
+    <main class="dashboard-main">
+        <div class="dashboard-topbar">
+            <div>
+                <h1>Hi {{ display_name }}</h1>
+                <div class="dashboard-topbar__meta">Admin workflow dashboard</div>
+            </div>
+            <a href="{% url 'logout' %}" class="btn btn-primary">Logout</a>
+        </div>
+        {% if messages %}
+        <div class="message-stack">
+            {% for message in messages %}
+            <div class="message-pill">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        <div class="dashboard-content">
+            {% block dashboard_content %}{% endblock %}
+        </div>
+    </main>
+</div>
+</body>
+</html>

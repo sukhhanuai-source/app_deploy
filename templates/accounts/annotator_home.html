@@ -1,0 +1,54 @@
+{% extends 'accounts/anotator_base.html' %}
+{% block dashboard_content %}
+<section class="content-card">
+    <div class="content-card__header">
+        <div>
+            <h2 class="content-card__title">Your Workspace URL</h2>
+            <p class="content-card__hint">Use this link for annotation resources shared with you.</p>
+        </div>
+    </div>
+    {% if annotator_url_obj %}
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+        <div>
+            <div class="text-muted small">Label</div>
+            <strong>{{ annotator_url_obj.name }}</strong>
+        </div>
+        <a class="btn btn-outline-primary" href="{{ annotator_url_obj.url }}" target="_blank" rel="noopener">Open URL</a>
+    </div>
+    {% else %}
+    <div class="text-muted">No URL assigned yet. Please contact your admin or Surveyor Head.</div>
+    {% endif %}
+</section>
+<section class="content-card">
+    <div class="content-card__header">
+        <div>
+            <h2 class="content-card__title">Download LabelMe Builds</h2>
+            <p class="content-card__hint">Grab the latest installer for your operating system.</p>
+        </div>
+    </div>
+    <div class="d-flex gap-3 flex-wrap">
+        <a class="btn btn-primary" href="https://amzn-ra-databucket.s3.ap-south-1.amazonaws.com/labelme/Labelme" target="_blank" rel="noopener">Download for Ubuntu</a>
+        <a class="btn btn-outline-secondary" href="https://amzn-ra-databucket.s3.ap-south-1.amazonaws.com/labelme/Labelme.exe" target="_blank" rel="noopener">Download for Windows</a>
+    </div>
+</section>
+<section class="summary-grid">
+    <article class="summary-card"><div class="summary-card__label">Total Tasks</div><div class="summary-card__value">{{ assignment_summary.total }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Done</div><div class="summary-card__value">{{ assignment_summary.complete }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">In Progress</div><div class="summary-card__value">{{ assignment_summary.in_progress }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Queue</div><div class="summary-card__value">{{ assignment_summary.queue }}</div></article>
+</section>
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">Overview And Task Progress</h2><p class="content-card__hint">Only tasks currently in progress are shown here.</p></div></div>
+    <div class="card-grid">
+        {% for assignment in in_progress_assignments %}
+        <article class="soft-card">
+            <strong>{{ assignment.display_name }}</strong>
+            <div class="mt-2"><code>{{ assignment.s3_path }}</code></div>
+            {% include 'accounts/_bucket_progress_panel.html' with assignment=assignment show_completion_actions=True %}
+        </article>
+        {% empty %}
+        <article class="soft-card">No in-progress tasks right now.</article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

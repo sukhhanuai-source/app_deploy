@@ -1,0 +1,99 @@
+{% extends 'accounts/surveyor_base.html' %}
+{% block dashboard_content %}
+<style>
+    .content-card {
+        background: var(--panel);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 1px solid var(--line);
+        box-shadow: 0 4px 12px rgba(18, 43, 51, 0.04);
+    }
+    .content-card__header { margin-bottom: 20px; }
+    .content-card__title { font-size: 1.5rem; font-weight: 600; color: var(--text); margin: 0 0 4px 0; }
+    .content-card__hint { color: var(--muted); font-size: 0.9rem; margin: 0; }
+    .dashboard-table { width: 100%; border-collapse: collapse; }
+    .dashboard-table th { text-align: left; padding: 10px 8px; font-weight: 600; color: var(--text); border-bottom: 2px solid var(--line); }
+    .dashboard-table td { padding: 14px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    .field-group { display: flex; flex-direction: column; gap: 6px; }
+    .field-label { font-weight: 600; font-size: 0.8rem; color: var(--muted); letter-spacing: 0.02em; text-transform: uppercase; }
+    input[type="text"], input[type="url"] { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 0.95rem; background: white; }
+    .user-row { background: var(--panel); border-radius: var(--radius-md); margin-bottom: 8px; border: 1px solid var(--line); transition: all 0.2s ease; }
+    .user-row:hover { border-color: var(--primary-light); box-shadow: 0 2px 8px rgba(18, 43, 51, 0.04); }
+    .save-all-container { margin-top: 24px; padding-top: 20px; border-top: 2px solid var(--line); display: flex; justify-content: flex-end; }
+    .btn-save { padding: 10px 24px; font-size: 0.95rem; font-weight: 500; }
+    @media (max-width: 900px) {
+        .dashboard-table, .dashboard-table thead { display: block; }
+        .dashboard-table th { display: none; }
+        .dashboard-table tr { display: block; margin-bottom: 16px; border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: 0 2px 10px rgba(18,43,51,0.05); }
+        .dashboard-table td { display: block; padding: 12px 12px; border-bottom: 1px solid var(--line); }
+        .dashboard-table td:last-child { border-bottom: none; }
+    }
+</style>
+<section class="content-card">
+    <div class="content-card__header">
+        <div>
+            <h2 class="content-card__title">Annotator URL Directory</h2>
+            <p class="content-card__hint">Assign a URL to each annotator. Leave fields blank to clear.</p>
+        </div>
+    </div>
+
+    <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="bulk_update_annotator_urls">
+
+        <div style="overflow:auto;">
+            <table class="dashboard-table">
+                <thead>
+                    <tr>
+                        <th>Annotator</th>
+                        <th>URL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for annotator in annotators %}
+                    <tr class="user-row">
+                        <td>
+                            <div class="field-group">
+                                <span class="field-label">Annotator</span>
+                                <input type="text" value="{{ annotator.django_user.username }}" disabled>
+                                <input type="hidden" name="annotator_ids" value="{{ annotator.id }}">
+                            </div>
+                        </td>
+                        <td>
+                            <div class="field-group">
+                                <span class="field-label">Select URL</span>
+                                <select name="url_resource_{{ annotator.id }}" class="form-select form-select-sm url-resource-select">
+                                    <option value="">-- Clear URL --</option>
+                                    {% for resource in url_resources %}
+                                    <option value="{{ resource.id }}" {% if annotator.annotator_url and annotator.annotator_url.resource_id == resource.id %}selected{% endif %}>{{ resource.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <small class="text-muted">Pick a library URL or choose “Clear URL”.</small>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="2" style="text-align:center; padding: 24px; color: var(--muted);">
+                            No annotators available.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="save-all-container">
+            <button type="submit" class="btn btn-primary btn-save">Save URL Changes</button>
+        </div>
+    </form>
+</section>
+<script>
+document.querySelectorAll('.url-resource-select').forEach((selectEl) => {
+    const row = selectEl.closest('tr');
+    // No manual fields; selection alone is enough (blank clears).
+    selectEl.addEventListener('change', () => {});
+});
+</script>
+{% endblock %}

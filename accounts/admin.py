@@ -2,11 +2,20 @@ from django.contrib import admin
 
 from .models import (
     AnnotatorBucketAssignment,
+    AnnotatorURL,
     CustomUser,
     Label,
     Organization,
     Project,
+    URLResource,
 )
+
+
+class AnnotatorURLInline(admin.StackedInline):
+    model = AnnotatorURL
+    extra = 0
+    fields = ('resource', 'name', 'url', 'created_date', 'updated_date')
+    readonly_fields = ('created_date', 'updated_date')
 
 
 @admin.register(CustomUser)
@@ -15,6 +24,7 @@ class CustomUserAdmin(admin.ModelAdmin):
     list_filter = ['role', 'is_verified', 'assigned_project', 'created_date']
     search_fields = ['django_user__username', 'django_user__email', 'phone_number']
     readonly_fields = ['created_date', 'updated_date']
+    inlines = [AnnotatorURLInline]
     fieldsets = (
         ('User Info', {'fields': ('django_user', 'phone_number')}),
         ('Account Details', {'fields': ('role', 'assigned_s3_path', 'assigned_project', 'is_verified')}),
@@ -48,9 +58,15 @@ class ProjectAdmin(admin.ModelAdmin):
 
 @admin.register(Label)
 class LabelAdmin(admin.ModelAdmin):
-    list_display = ['name', 'project', 'color']
-    list_filter = ['project']
+    list_display = ['name', 'get_projects', 'color']
+    list_filter = ['projects']
     search_fields = ['name']
+    filter_horizontal = ['projects']
+
+    def get_projects(self, obj):
+        return ", ".join(obj.projects.order_by('name').values_list('name', flat=True)) or "-"
+
+    get_projects.short_description = 'Projects'
 
 
 @admin.register(AnnotatorBucketAssignment)
@@ -58,3 +74,16 @@ class AnnotatorBucketAssignmentAdmin(admin.ModelAdmin):
     list_display = ['display_name', 'annotator', 'project', 's3_path', 'created_date']
     list_filter = ['project', 'created_date']
     search_fields = ['display_name', 's3_path', 'annotator__django_user__username']
+
+
+@admin.register(AnnotatorURL)
+class AnnotatorURLAdmin(admin.ModelAdmin):
+    list_display = ['annotator', 'name', 'url', 'resource', 'created_date']
+    search_fields = ['annotator__django_user__username', 'name', 'url']
+    list_filter = ['resource', 'created_date']
+
+
+@admin.register(URLResource)
+class URLResourceAdmin(admin.ModelAdmin):
+    list_display = ['name', 'url', 'created_date']
+    search_fields = ['name', 'url']

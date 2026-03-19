@@ -13,7 +13,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.db import IntegrityError
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
@@ -29,10 +29,12 @@ except Exception:  # pragma: no cover - botocore is optional at import time
 from .forms import ForgotPasswordForm, LoginForm, ResetPasswordForm, SignUpForm
 from .models import (
     AnnotatorBucketAssignment,
+    AnnotatorURL,
     CustomUser,
     Label,
     Organization,
     Project,
+    URLResource,
 )
 
 
@@ -50,6 +52,21 @@ ASSIGNMENT_STATUS_QUEUE = 'queue'
 ASSIGNMENT_STATUS_IN_PROGRESS = 'in_progress'
 ASSIGNMENT_STATUS_COMPLETE = 'complete'
 ASSIGNMENT_STATUS_UNAVAILABLE = 'unavailable'
+ANNOTATION_MANIFEST_BUCKET = os.environ.get('ANNOTATION_MANIFEST_BUCKET', 'amzn-ra-databucket')
+ANNOTATION_MANIFEST_KEY = os.environ.get('ANNOTATION_MANIFEST_KEY', 'hanuai/annotated_manifest.json')
+def _default_project_labels():
+    """
+    Returns a list of default label names from env var DEFAULT_PROJECT_LABELS
+    (comma-separated). Falls back to an empty list to avoid hardcoding.
+    """
+    raw = os.environ.get('DEFAULT_PROJECT_LABELS', '')
+    return [item.strip() for item in raw.split(',') if item.strip()]
+
+
+def _project_label_names(project):
+    if not project:
+        return []
+    return sorted(label.name for label in project.labels.all())
 
 
 def _serialize_bucket_assignment(obj):
@@ -59,13 +76,56 @@ def _serialize_bucket_assignment(obj):
         "s3_path": obj.s3_path,
         "project_id": obj.project_id,
         "project_name": obj.project.name if obj.project_id else "",
-        "project_labels": [label.name for label in obj.project.labels.order_by('name')] if obj.project_id else [],
+        "project_labels": _project_label_names(obj.project),
     }
+
+
+def _save_annotator_url(annotator, url_name, url_value, resource_id=None):
+    """Create, update, or clear the single URL attached to an annotator profile."""
+    url_name = (url_name or '').strip()
+    url_value = (url_value or '').strip()
+
+    resource_obj = None
+    if resource_id:
+        try:
+            resource_obj = URLResource.objects.get(id=resource_id)
+            # Prefer library values; ignore manual fields when a resource is picked.
+            url_name = resource_obj.name
+            url_value = resource_obj.url
+        except URLResource.DoesNotExist:
+            resource_obj = None
+
+    try:
+        existing = annotator.annotator_url
+    except AnnotatorURL.DoesNotExist:
+        existing = None
+
+    if not url_name and not url_value:
+        if existing:
+            existing.delete()
+            return True, 'cleared'
+        return True, 'unchanged'
+
+    if not url_name or not url_value:
+        return False, 'Both name and URL are required to save an annotator URL.'
+
+    if existing and existing.name == url_name and existing.url == url_value:
+        return True, 'unchanged'
+
+    AnnotatorURL.objects.update_or_create(
+        annotator=annotator,
+        defaults={'name': url_name, 'url': url_value, 'resource': resource_obj},
+    )
+    return True, 'saved'
 
 
 def _serialize_custom_user(user, custom_profile):
     assigned_project = custom_profile.assigned_project
     bucket_assignments = list(custom_profile.bucket_assignments.select_related('project').prefetch_related('project__labels'))
+    try:
+        annotator_url_obj = custom_profile.annotator_url
+    except AnnotatorURL.DoesNotExist:
+        annotator_url_obj = None
     return {
         "id": custom_profile.id,
         "django_user_id": user.id,
@@ -79,10 +139,13 @@ def _serialize_custom_user(user, custom_profile):
         "assigned_s3_path": custom_profile.assigned_s3_path,
         "assigned_project_id": custom_profile.assigned_project_id,
         "assigned_project": _serialize_project(assigned_project) if assigned_project else None,
-        "assigned_project_labels": [
-            label.name for label in assigned_project.labels.order_by('name')
-        ] if assigned_project else [],
+        "assigned_project_labels": _project_label_names(assigned_project),
         "bucket_assignments": [_serialize_bucket_assignment(item) for item in bucket_assignments],
+        "annotator_url": {
+            "name": annotator_url_obj.name,
+            "url": annotator_url_obj.url,
+            "resource_id": annotator_url_obj.resource_id,
+        } if annotator_url_obj else None,
         "is_verified": custom_profile.is_verified,
         "created_date": custom_profile.created_date.isoformat() if custom_profile.created_date else None,
         "updated_date": custom_profile.updated_date.isoformat() if custom_profile.updated_date else None,
@@ -148,7 +211,8 @@ def _serialize_label(obj):
     return {
         "id": obj.id,
         "name": obj.name,
-        "project_id": obj.project_id,
+        "project_ids": list(obj.projects.order_by('id').values_list('id', flat=True)),
+        "project_names": list(obj.projects.order_by('name').values_list('name', flat=True)),
         "color": obj.color,
     }
 
@@ -168,6 +232,114 @@ def _get_or_create_assigner_organization(custom_user):
     organization = Organization.objects.create(name=name, owner=custom_user)
     organization.members.add(custom_user)
     return organization
+
+
+def _parse_project_ids(values):
+    project_ids = []
+    for raw_value in values:
+        try:
+            project_id = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if project_id not in project_ids:
+            project_ids.append(project_id)
+    return project_ids
+
+
+def _display_name_for_dashboard(user):
+    full_name = f"{user.first_name} {user.last_name}".strip()
+    return full_name or user.username
+
+
+def _build_progress_summary(assignments):
+    summary = {
+        'total': 0,
+        'complete': 0,
+        'in_progress': 0,
+        'queue': 0,
+        'pending': 0,
+    }
+    for assignment in assignments:
+        summary['total'] += 1
+        status = getattr(assignment, 'bucket_progress', {}).get('status')
+        if status == ASSIGNMENT_STATUS_COMPLETE:
+            summary['complete'] += 1
+        elif status == ASSIGNMENT_STATUS_IN_PROGRESS:
+            summary['in_progress'] += 1
+        else:
+            summary['queue'] += 1
+    summary['pending'] = summary['total'] - summary['complete']
+    return summary
+
+
+def _redirect_to_current_page(request, fallback_name):
+    current_name = getattr(getattr(request, 'resolver_match', None), 'url_name', None)
+    if current_name:
+        return redirect(current_name)
+    return redirect(fallback_name)
+
+
+def _project_scope_for_user(profile):
+    if profile.role == CustomUser.ROLE_ASSIGNER:
+        return Project.objects.filter(owner=profile)
+    return Project.objects.all()
+
+
+def _resolve_projects_for_label(profile, project_ids):
+    if not project_ids:
+        return []
+    scoped_projects = _project_scope_for_user(profile)
+    projects = list(scoped_projects.filter(id__in=project_ids).order_by('name'))
+    if len(projects) != len(project_ids):
+        return None
+    return projects
+
+
+def _upsert_label_with_projects(*, label, name, color, projects):
+    label.name = name
+    label.color = color
+    label.save()
+    label.projects.set(projects)
+    return label
+
+
+def _label_name_conflict(name, exclude_id=None):
+    qs = Label.objects.filter(name__iexact=name)
+    if exclude_id:
+        qs = qs.exclude(id=exclude_id)
+    return qs.exists()
+
+
+def _next_label_color(existing_colors_iterable):
+    palette = [
+        '#0d8a72',
+        '#f0b44d',
+        '#6a4c93',
+        '#1d3557',
+        '#e63946',
+        '#2a9d8f',
+        '#f4a261',
+        '#1982c4',
+        '#ff595e',
+    ]
+    existing = [c.lower() for c in existing_colors_iterable]
+    for color in palette:
+        if color.lower() not in existing:
+            return color
+    return palette[len(existing) % len(palette)]
+
+
+def _sanitize_label_color(raw_color, used_colors):
+    """
+    Pick a color that is not already used. If the supplied color is blank
+    or already taken, fall back to the next available palette color.
+    """
+    color = (raw_color or '').strip()
+    if color and not color.startswith('#'):
+        color = f'#{color}'
+    if not color or color.lower() in used_colors:
+        color = _next_label_color(used_colors)
+    return color
 
 
 def _load_key_value_env_file(env_path):
@@ -200,8 +372,22 @@ def _get_review_s3_config():
         'aws_secret_access_key': pick('AWS_SECRET_ACCESS_KEY', 'AWS_SECRET_KEY'),
         'aws_session_token': pick('AWS_SESSION_TOKEN'),
         'region_name': pick('AWS_REGION', 'AWS_DEFAULT_REGION', 'AWS_S3_REGION_NAME', default='ap-south-1'),
-        'bucket': pick('S3_BUCKET', 'AWS_S3_BUCKET', 'AWS_STORAGE_BUCKET_NAME', default='raiotransection'),
-        'root_prefix': pick('S3_ROOT_PREFIX', default='sukh'),
+        'input_bucket': pick(
+            'S3_INPUT_BUCKET',
+            'AWS_S3_INPUT_BUCKET',
+            'AWS_INPUT_STORAGE_BUCKET_NAME',
+            default='raiotransection',
+        ),
+        'bucket': pick(
+            'S3_OUTPUT_BUCKET',
+            'AWS_S3_OUTPUT_BUCKET',
+            'AWS_OUTPUT_STORAGE_BUCKET_NAME',
+            'S3_BUCKET',
+            'AWS_S3_BUCKET',
+            'AWS_STORAGE_BUCKET_NAME',
+            default='annotatedata',
+        ),
+        'root_prefix': pick('S3_ROOT_PREFIX', default='hanuai'),
         'endpoint_url': pick('S3_ENDPOINT_URL', 'AWS_S3_ENDPOINT_URL'),
     }
 
@@ -358,6 +544,71 @@ def _write_assignment_progress_json(s3_client, bucket, key, payload):
         )
     except (BotoCoreError, ClientError, TypeError, ValueError):
         return False
+    except Exception:
+        return False
+    return True
+
+
+def _append_annotation_manifest(s3_client, entries, assignment, default_bucket):
+    """
+    Append/merge annotation metadata into a global manifest JSON stored in S3.
+    Each record includes annotation path, image path, annotator, project, and timestamp.
+    """
+    if s3_client is None or not ANNOTATION_MANIFEST_BUCKET or not ANNOTATION_MANIFEST_KEY:
+        return False
+
+    # Load existing manifest
+    try:
+        resp = s3_client.get_object(Bucket=ANNOTATION_MANIFEST_BUCKET, Key=ANNOTATION_MANIFEST_KEY)
+        raw = resp['Body'].read()
+        manifest = json.loads(raw.decode('utf-8')) if raw else []
+        if not isinstance(manifest, list):
+            manifest = []
+    except Exception:
+        manifest = []
+
+    manifest_index = {item.get('annotation_s3_uri'): idx for idx, item in enumerate(manifest) if isinstance(item, dict)}
+    updated = False
+    base_project = assignment.project.name if assignment.project_id else ''
+    annotator_name = assignment.annotator.django_user.username
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        ann_bucket = (entry.get('annotation_bucket') or default_bucket or '').strip()
+        ann_key = (entry.get('annotation_key') or '').strip()
+        if not ann_bucket or not ann_key:
+            continue
+        img_bucket = (entry.get('image_bucket') or default_bucket or '').strip()
+        img_key = (entry.get('image_key') or '').strip()
+
+        record = {
+            'annotation_s3_uri': f"s3://{ann_bucket}/{ann_key}",
+            'image_s3_uri': f"s3://{img_bucket}/{img_key}" if img_bucket and img_key else '',
+            'project': base_project,
+            'annotator': annotator_name,
+            'labels': entry.get('labels') or [],
+            'uploaded_at_utc': _utc_now_iso(),
+        }
+
+        existing_idx = manifest_index.get(record['annotation_s3_uri'])
+        if existing_idx is not None:
+            # Already recorded; skip to avoid unnecessary writes.
+            continue
+        manifest.append(record)
+        manifest_index[record['annotation_s3_uri']] = len(manifest) - 1
+        updated = True
+
+    if not updated:
+        return False
+
+    try:
+        s3_client.put_object(
+            Bucket=ANNOTATION_MANIFEST_BUCKET,
+            Key=ANNOTATION_MANIFEST_KEY,
+            Body=json.dumps(manifest, indent=2, sort_keys=True).encode('utf-8'),
+            ContentType='application/json',
+        )
     except Exception:
         return False
     return True
@@ -562,6 +813,13 @@ def _sync_assignment_progress(assignment, manual_complete_override=None, manual_
         key=payload['progress_json_key'],
         payload=payload,
     )
+    # Append a lightweight manifest entry for quick lookup
+    _append_annotation_manifest(
+        s3_client=s3_client,
+        entries=payload.get('annotation_entries', {}).values(),
+        assignment=assignment,
+        default_bucket=bucket,
+    )
     return _decorate_assignment_progress_payload(payload)
 
 
@@ -658,17 +916,22 @@ def _review_json_objects(project_name, annotator_name, review_date):
     prefix = _review_json_prefix(project_name, annotator_name, review_date)
     paginator = client.get_paginator('list_objects_v2')
     results = []
-    for page in paginator.paginate(Bucket=config['bucket'], Prefix=prefix):
-        for item in page.get('Contents', []):
-            key = item.get('Key', '')
-            if not key.endswith('.json'):
-                continue
-            results.append(
-                {
-                    'key': key,
-                    'file_name': os.path.basename(key),
-                }
-            )
+    try:
+        for page in paginator.paginate(Bucket=config['bucket'], Prefix=prefix):
+            for item in page.get('Contents', []):
+                key = item.get('Key', '')
+                if not key.endswith('.json'):
+                    continue
+                results.append(
+                    {
+                        'key': key,
+                        'file_name': os.path.basename(key),
+                    }
+                )
+    except (ClientError, BotoCoreError):
+        return []
+    except Exception:
+        return []
     return results
 
 
@@ -679,7 +942,7 @@ def _review_json_preview_bytes(key):
     config = _get_review_s3_config()
     try:
         body = client.get_object(Bucket=config['bucket'], Key=key)['Body'].read()
-    except Exception:
+    except (ClientError, BotoCoreError, Exception):
         return None
     return _render_labelme_json_preview(body)
 
@@ -767,514 +1030,76 @@ def logout_view(request):
     return redirect('login')
 
 
-@login_required(login_url='login')
-def dashboard_view(request):
-    custom_user = _get_custom_profile_or_none(request)
-    if not custom_user:
-        messages.error(request, 'User profile not found.')
-        return redirect('logout')
-
-    if custom_user.role == CustomUser.ROLE_ADMIN:
-        return redirect('admin_dash')
-    if custom_user.role == CustomUser.ROLE_ASSIGNER:
-        return redirect('assigner_dash')
-    if custom_user.role == CustomUser.ROLE_REVIEWER:
-        return redirect('reviewer_dash')
-    return redirect('anotater_dash')
-
-
-@login_required(login_url='login')
-def admin_dashboard_view(request):
-    custom_user = _get_custom_profile_or_none(request)
-    if not custom_user or custom_user.role != CustomUser.ROLE_ADMIN:
-        messages.error(request, 'You do not have permission to access this page.')
-        return redirect('dashboard')
-
-    if request.method == 'GET' and request.GET.get('action') == 'preview_review_image':
-        review_key = request.GET.get('review_key') or ''
-        if not review_key:
-            return HttpResponse(status=400)
-        preview_bytes = _review_json_preview_bytes(review_key)
-        if preview_bytes is None:
-            return HttpResponse(status=404)
-        return HttpResponse(preview_bytes, content_type='image/jpeg')
-
-    if request.method == 'POST':
-        action = request.POST.get('action')
-        if action == 'create_project':
-            name = (request.POST.get('project_name') or '').strip()
-            description = (request.POST.get('project_description') or '').strip()
-            if not name:
-                messages.error(request, 'Project name is required.')
-                return redirect('admin_dash')
-
-            organization = _get_or_create_assigner_organization(custom_user)
-            try:
-                Project.objects.create(
-                    name=name,
-                    description=description,
-                    owner=custom_user,
-                    organization=organization,
-                )
-            except IntegrityError:
-                messages.error(request, f'Project "{name}" already exists in your workspace.')
-                return redirect('admin_dash')
-
-            messages.success(request, f'Project "{name}" created successfully.')
-            return redirect('admin_dash')
-
-        if action == 'create_label':
-            project_id = request.POST.get('project_id')
-            label_name = (request.POST.get('label_name') or '').strip()
-            color = (request.POST.get('label_color') or '#FF5733').strip() or '#FF5733'
-            if not project_id or not label_name:
-                messages.error(request, 'Project and label name are required.')
-                return redirect('admin_dash')
-
-            try:
-                project = Project.objects.get(id=project_id)
-            except Project.DoesNotExist:
-                messages.error(request, 'Project not found.')
-                return redirect('admin_dash')
-
-            try:
-                Label.objects.create(project=project, name=label_name, color=color)
-            except IntegrityError:
-                messages.error(request, f'Label "{label_name}" already exists in project "{project.name}".')
-                return redirect('admin_dash')
-
-            messages.success(request, f'Label "{label_name}" added to project "{project.name}".')
-            return redirect('admin_dash')
-
-        if action == 'delete_bucket_assignment':
-            assignment_id = request.POST.get('assignment_id')
-            try:
-                assignment = AnnotatorBucketAssignment.objects.select_related('annotator__django_user').get(id=assignment_id)
-            except AnnotatorBucketAssignment.DoesNotExist:
-                messages.error(request, 'Bucket assignment not found.')
-                return redirect('admin_dash')
-
-            annotator_name = assignment.annotator.django_user.username
-            assignment.delete()
-            messages.success(request, f'Removed bucket assignment for {annotator_name}.')
-            return redirect('admin_dash')
-
-        if action == 'add_bucket_assignment':
-            annotator_id = request.POST.get('annotator_id')
-            assigned_s3_path = (request.POST.get('assigned_s3_path') or '').strip()
-            project_id = request.POST.get('assigned_project_id')
-            display_name = (request.POST.get('display_name') or '').strip()
-
-            if not annotator_id or not assigned_s3_path:
-                messages.error(request, 'Select an annotator and provide a bucket path.')
-                return redirect('admin_dash')
-
-            try:
-                annotator = CustomUser.objects.select_related('django_user').get(
-                    id=annotator_id,
-                    role=CustomUser.ROLE_ANNOTATOR,
-                )
-            except CustomUser.DoesNotExist:
-                messages.error(request, 'Annotator not found.')
-                return redirect('admin_dash')
-
-            assigned_project = None
-            if project_id:
-                try:
-                    assigned_project = Project.objects.get(id=project_id)
-                except Project.DoesNotExist:
-                    messages.error(request, 'Assigned project not found.')
-                    return redirect('admin_dash')
-
-            assignment = AnnotatorBucketAssignment.objects.create(
-                annotator=annotator,
-                project=assigned_project,
-                s3_path=assigned_s3_path,
-                display_name=display_name or assigned_s3_path,
-            )
-
-            if not annotator.assigned_project and assigned_project:
-                annotator.assigned_project = assigned_project
-                annotator.assigned_s3_path = assigned_s3_path
-                annotator.save(update_fields=['assigned_project', 'assigned_s3_path', 'updated_date'])
-
-            messages.success(
-                request,
-                f'Added bucket "{assignment.display_name}" for {annotator.django_user.username}.',
-            )
-            return redirect('admin_dash')
-
-        if action == 'delete_review_json':
-            review_key = request.POST.get('review_key') or ''
-            if not review_key:
-                messages.error(request, 'Review JSON key is required.')
-                return redirect('admin_dash')
-            deleted, delete_message = _delete_review_json_object(review_key)
-            if deleted:
-                messages.success(request, f'Deleted {os.path.basename(review_key)} from S3.')
-            else:
-                messages.error(request, f'Could not delete JSON from S3. {delete_message}')
-            return redirect(
-                f"{request.path}?project_id={request.POST.get('project_id','')}&annotator_id={request.POST.get('annotator_id','')}&review_date={request.POST.get('review_date','')}&page={request.POST.get('page','1')}"
-            )
-
-        target_user_id = request.POST.get('target_user_id')
-        role = request.POST.get('role')
-        is_verified = request.POST.get('is_verified') == 'on'
-
-        if not target_user_id or not role:
-            messages.error(request, 'target_user_id and role are required.')
-            return redirect('admin_dash')
-
-        valid_roles = {choice[0] for choice in CustomUser.ROLE_CHOICES}
-        if role not in valid_roles:
-            messages.error(request, 'Invalid role selected.')
-            return redirect('admin_dash')
-
-        try:
-            target_user = CustomUser.objects.select_related('django_user').get(id=target_user_id)
-        except CustomUser.DoesNotExist:
-            messages.error(request, 'User profile not found.')
-            return redirect('admin_dash')
-
-        if target_user.id == custom_user.id and role != CustomUser.ROLE_ADMIN:
-            messages.error(request, 'You cannot remove your own admin role from this dashboard.')
-            return redirect('admin_dash')
-
-        target_user.role = role
-        target_user.is_verified = is_verified
-        target_user.save(update_fields=['role', 'is_verified', 'updated_date'])
-        messages.success(
-            request,
-            f"Updated {target_user.django_user.username}: role={target_user.get_role_display()}, verified={target_user.is_verified}.",
-        )
-        return redirect('admin_dash')
-
-    role_count_map = {item['role']: item['count'] for item in CustomUser.objects.values('role').annotate(count=Count('id'))}
-    authority_cards = [
-        {
-            'title': 'User Authority',
-            'count': CustomUser.objects.count(),
-            'subtitle': 'User profiles under control',
-            'description': 'Admin can verify accounts, change roles, and control who becomes assigner, annotator, or reviewer.',
-        },
-        {
-            'title': 'Assigner Authority',
-            'count': AnnotatorBucketAssignment.objects.count(),
-            'subtitle': 'Bucket assignments tracked',
-            'description': 'Admin oversees project creation, label structures, and the path assignments managed by assigners.',
-        },
-        {
-            'title': 'Reviewer Authority',
-            'count': Project.objects.count(),
-            'subtitle': 'Projects available for review',
-            'description': 'Admin controls reviewer access and supervises review coverage across project, annotator, and date-based outputs.',
-        },
-        {
-            'title': 'Annotation Output',
-            'count': Label.objects.count(),
-            'subtitle': 'Labels configured',
-            'description': 'Admin retains top-level authority over label taxonomy and downstream annotation quality operations.',
-        },
-    ]
-    users = CustomUser.objects.select_related('django_user').order_by('django_user__username')
+def _assigner_dashboard_context(custom_user):
     annotators = list(CustomUser.objects.filter(role=CustomUser.ROLE_ANNOTATOR).select_related(
         'django_user',
         'assigned_project',
+        'annotator_url',
     ).prefetch_related('assigned_project__labels', 'bucket_assignments__project__labels'))
+    all_assignments = []
     for annotator in annotators:
         annotator.bucket_assignment_list = _attach_assignment_progress(
             annotator.bucket_assignments.all()
         )
-    projects = Project.objects.select_related('organization').prefetch_related('labels').order_by('name')
+        all_assignments.extend(annotator.bucket_assignment_list)
 
-    selected_project_id = request.GET.get('project_id') or ''
-    selected_annotator_id = request.GET.get('annotator_id') or ''
-    selected_date = request.GET.get('review_date') or ''
-    selected_page = request.GET.get('page') or '1'
-    review_items = []
-    review_page_obj = None
-
-    if selected_project_id and selected_annotator_id and selected_date:
-        try:
-            project = Project.objects.get(id=selected_project_id)
-            annotator = CustomUser.objects.select_related('django_user').get(
-                id=selected_annotator_id,
-                role=CustomUser.ROLE_ANNOTATOR,
-            )
-            review_date_obj = datetime.strptime(selected_date, '%Y-%m-%d').date()
-            review_items = _review_json_objects(
-                project_name=project.name,
-                annotator_name=annotator.django_user.username,
-                review_date=review_date_obj,
-            )
-            paginator = Paginator(review_items, 10)
-            review_page_obj = paginator.get_page(selected_page)
-            for item in review_page_obj.object_list:
-                item['preview_url'] = (
-                    f"{request.path}?action=preview_review_image"
-                    f"&review_key={quote(item['key'], safe='')}"
-                    f"&project_id={selected_project_id}"
-                    f"&annotator_id={selected_annotator_id}"
-                    f"&review_date={selected_date}"
-                    f"&page={review_page_obj.number}"
-                )
-            if not review_items:
-                messages.info(request, 'No review JSON files found for the selected project, annotator, and date.')
-        except (Project.DoesNotExist, CustomUser.DoesNotExist, ValueError):
-            messages.error(request, 'Invalid reviewer filter values.')
-
-    return render(
-        request,
-        'accounts/admin_dashboard.html',
-        {
-            'custom_user': custom_user,
-            'user_type': custom_user.user_type,
-            'authority_cards': authority_cards,
-            'users': users,
-            'annotators': annotators,
-            'projects': projects,
-            'role_choices': CustomUser.ROLE_CHOICES,
-            'role_counts': {
-                'admin': role_count_map.get(CustomUser.ROLE_ADMIN, 0),
-                'assigner': role_count_map.get(CustomUser.ROLE_ASSIGNER, 0),
-                'annotator': role_count_map.get(CustomUser.ROLE_ANNOTATOR, 0),
-                'reviewer': role_count_map.get(CustomUser.ROLE_REVIEWER, 0),
-            },
-            'review_projects': projects,
-            'review_annotators': annotators,
-            'selected_project_id': selected_project_id,
-            'selected_annotator_id': selected_annotator_id,
-            'selected_review_date': selected_date,
-            'review_items': review_page_obj.object_list if review_page_obj else [],
-            'review_page_obj': review_page_obj,
-        },
-    )
-
-
-@login_required(login_url='login')
-def assigner_dashboard_view(request):
-    custom_user = _get_custom_profile_or_none(request)
-    if not custom_user or custom_user.role != CustomUser.ROLE_ASSIGNER:
-        messages.error(request, 'You do not have permission to access this page.')
-        return redirect('dashboard')
-
-    if request.method == 'POST':
-        action = request.POST.get('action')
-
-        if action == 'create_project':
-            name = (request.POST.get('project_name') or '').strip()
-            description = (request.POST.get('project_description') or '').strip()
-            if not name:
-                messages.error(request, 'Project name is required.')
-                return redirect('assigner_dash')
-
-            organization = _get_or_create_assigner_organization(custom_user)
-            try:
-                Project.objects.create(
-                    name=name,
-                    description=description,
-                    owner=custom_user,
-                    organization=organization,
-                )
-            except IntegrityError:
-                messages.error(request, f'Project "{name}" already exists in your workspace.')
-                return redirect('assigner_dash')
-
-            messages.success(request, f'Project "{name}" created successfully.')
-            return redirect('assigner_dash')
-
-        if action == 'create_label':
-            project_id = request.POST.get('project_id')
-            label_name = (request.POST.get('label_name') or '').strip()
-            color = (request.POST.get('label_color') or '#FF5733').strip() or '#FF5733'
-            if not project_id or not label_name:
-                messages.error(request, 'Project and label name are required.')
-                return redirect('assigner_dash')
-
-            try:
-                project = Project.objects.get(id=project_id)
-            except Project.DoesNotExist:
-                messages.error(request, 'Project not found.')
-                return redirect('assigner_dash')
-
-            try:
-                Label.objects.create(project=project, name=label_name, color=color)
-            except IntegrityError:
-                messages.error(request, f'Label "{label_name}" already exists in project "{project.name}".')
-                return redirect('assigner_dash')
-
-            messages.success(request, f'Label "{label_name}" added to project "{project.name}".')
-            return redirect('assigner_dash')
-
-        if action == 'delete_bucket_assignment':
-            assignment_id = request.POST.get('assignment_id')
-            try:
-                assignment = AnnotatorBucketAssignment.objects.select_related('annotator__django_user').get(id=assignment_id)
-            except AnnotatorBucketAssignment.DoesNotExist:
-                messages.error(request, 'Bucket assignment not found.')
-                return redirect('assigner_dash')
-
-            annotator_name = assignment.annotator.django_user.username
-            assignment.delete()
-            messages.success(request, f'Removed bucket assignment for {annotator_name}.')
-            return redirect('assigner_dash')
-
-        annotator_id = request.POST.get('annotator_id')
-        assigned_s3_path = (request.POST.get('assigned_s3_path') or '').strip()
-        project_id = request.POST.get('assigned_project_id')
-        display_name = (request.POST.get('display_name') or '').strip()
-
-        if not annotator_id or not assigned_s3_path:
-            messages.error(request, 'Select an annotator and provide a bucket path.')
-            return redirect('assigner_dash')
-
-        try:
-            annotator = CustomUser.objects.select_related('django_user').get(
-                id=annotator_id,
-                role=CustomUser.ROLE_ANNOTATOR,
-            )
-        except CustomUser.DoesNotExist:
-            messages.error(request, 'Annotator not found.')
-            return redirect('assigner_dash')
-
-        assigned_project = None
-        if project_id:
-            try:
-                assigned_project = Project.objects.get(id=project_id, owner=custom_user)
-            except Project.DoesNotExist:
-                messages.error(request, 'Assigned project not found.')
-                return redirect('assigner_dash')
-
-        assignment = AnnotatorBucketAssignment.objects.create(
-            annotator=annotator,
-            project=assigned_project,
-            s3_path=assigned_s3_path,
-            display_name=display_name or assigned_s3_path,
-        )
-
-        if not annotator.assigned_project and assigned_project:
-            annotator.assigned_project = assigned_project
-            annotator.assigned_s3_path = assigned_s3_path
-            annotator.save(update_fields=['assigned_project', 'assigned_s3_path', 'updated_date'])
-
-        messages.success(
-            request,
-            f'Added bucket "{assignment.display_name}" for {annotator.django_user.username}.',
-        )
-        return redirect('assigner_dash')
-
-    annotators = list(CustomUser.objects.filter(role=CustomUser.ROLE_ANNOTATOR).select_related(
-        'django_user',
-        'assigned_project',
-    ).prefetch_related('assigned_project__labels', 'bucket_assignments__project__labels'))
-    for annotator in annotators:
-        annotator.bucket_assignment_list = _attach_assignment_progress(
-            annotator.bucket_assignments.all()
-        )
     projects = Project.objects.filter(owner=custom_user).select_related('organization').prefetch_related('labels').order_by('name')
-    return render(
-        request,
-        'accounts/worker_dashboard.html',
-        {
-            'custom_user': custom_user,
-            'user_type': custom_user.user_type,
-            'dashboard_title': 'Assigner Dashboard',
-            'annotators': annotators,
-            'projects': projects,
-        },
-    )
+    labels = Label.objects.prefetch_related('projects').filter(
+        Q(projects__owner=custom_user) | Q(projects__isnull=True)
+    ).distinct().order_by('name')
+    return {
+        'custom_user': custom_user,
+        'display_name': _display_name_for_dashboard(custom_user.django_user),
+        'projects': projects,
+        'labels': labels,
+        'annotators': annotators,
+        'assignment_summary': _build_progress_summary(all_assignments),
+        'base_template': 'accounts/assginer_base.html',
+        'role_name': 'Assigner',
+        'default_project_labels': _default_project_labels(),
+        'url_resources': URLResource.objects.order_by('name'),
+    }
 
 
-@login_required(login_url='login')
-def annotater_dashboard_view(request):
-    custom_user = _get_custom_profile_or_none(request)
-    if not custom_user or custom_user.role != CustomUser.ROLE_ANNOTATOR:
-        messages.error(request, 'You do not have permission to access this page.')
-        return redirect('dashboard')
-
-    if request.method == 'POST':
-        action = request.POST.get('action')
-        if action == 'set_bucket_completion':
-            assignment_id = request.POST.get('assignment_id')
-            mark_complete = request.POST.get('manual_complete') == '1'
-            try:
-                assignment = AnnotatorBucketAssignment.objects.select_related(
-                    'annotator__django_user',
-                    'project',
-                ).get(id=assignment_id, annotator=custom_user)
-            except AnnotatorBucketAssignment.DoesNotExist:
-                messages.error(request, 'Bucket assignment not found.')
-                return redirect('anotater_dash')
-
-            bucket_progress = _sync_assignment_progress(
-                assignment,
-                manual_complete_override=mark_complete,
-                manual_actor=custom_user.django_user.username,
-            )
-            if bucket_progress.get('status') == ASSIGNMENT_STATUS_UNAVAILABLE:
-                messages.error(request, 'Bucket progress JSON could not be updated.')
-            elif mark_complete:
-                messages.success(request, f'Bucket "{assignment.display_name}" marked complete.')
-            else:
-                messages.success(request, f'Bucket "{assignment.display_name}" moved back to in progress.')
-            return redirect('anotater_dash')
-
-    annotator_assignments = _attach_assignment_progress(
+def _annotator_dashboard_context(custom_user):
+    annotator_assignments = list(_attach_assignment_progress(
         custom_user.bucket_assignments.select_related('project').prefetch_related('project__labels')
-    )
-    return render(
-        request,
-        'accounts/worker_dashboard.html',
-        {
-            'custom_user': custom_user,
-            'user_type': custom_user.user_type,
-            'dashboard_title': 'Annotator Dashboard',
-            'annotator_assignments': annotator_assignments,
-        },
-    )
+    ))
+    in_progress_assignments = [
+        assignment for assignment in annotator_assignments
+        if assignment.bucket_progress.get('status') == ASSIGNMENT_STATUS_IN_PROGRESS
+    ]
+    queued_assignments = [
+        assignment for assignment in annotator_assignments
+        if assignment.bucket_progress.get('status') in {ASSIGNMENT_STATUS_QUEUE, ASSIGNMENT_STATUS_UNAVAILABLE}
+    ]
+    try:
+        annotator_url_obj = custom_user.annotator_url
+    except AnnotatorURL.DoesNotExist:
+        annotator_url_obj = None
+    return {
+        'custom_user': custom_user,
+        'display_name': _display_name_for_dashboard(custom_user.django_user),
+        'annotator_assignments': annotator_assignments,
+        'in_progress_assignments': in_progress_assignments,
+        'queued_assignments': queued_assignments,
+        'assignment_summary': _build_progress_summary(annotator_assignments),
+        'base_template': 'accounts/anotator_base.html',
+        'role_name': 'Annotator',
+        'annotator_url_obj': annotator_url_obj,
+        'url_resources': URLResource.objects.order_by('name'),
+    }
 
 
-@login_required(login_url='login')
-def reviewer_dashboard_view(request):
-    custom_user = _get_custom_profile_or_none(request)
-    if not custom_user or custom_user.role != CustomUser.ROLE_REVIEWER:
-        messages.error(request, 'You do not have permission to access this page.')
-        return redirect('dashboard')
-
-    if request.method == 'GET' and request.GET.get('action') == 'preview_review_image':
-        review_key = request.GET.get('review_key') or ''
-        if not review_key:
-            return HttpResponse(status=400)
-        preview_bytes = _review_json_preview_bytes(review_key)
-        if preview_bytes is None:
-            return HttpResponse(status=404)
-        return HttpResponse(preview_bytes, content_type='image/jpeg')
-
-    if request.method == 'POST':
-        action = request.POST.get('action')
-        if action == 'delete_review_json':
-            review_key = request.POST.get('review_key') or ''
-            if not review_key:
-                messages.error(request, 'Review JSON key is required.')
-                return redirect('reviewer_dash')
-            deleted, delete_message = _delete_review_json_object(review_key)
-            if deleted:
-                messages.success(request, f'Deleted {os.path.basename(review_key)} from S3.')
-            else:
-                messages.error(request, f'Could not delete JSON from S3. {delete_message}')
-            return redirect(
-                f"{request.path}?project_id={request.POST.get('project_id','')}&annotator_id={request.POST.get('annotator_id','')}&review_date={request.POST.get('review_date','')}&page={request.POST.get('page','1')}"
-            )
-
+def _reviewer_dashboard_context(request, custom_user):
     projects = Project.objects.order_by('name')
-    annotators = CustomUser.objects.filter(role=CustomUser.ROLE_ANNOTATOR).select_related('django_user').order_by('django_user__username')
-    review_assignment_rows = _attach_assignment_progress(
+    annotators = CustomUser.objects.filter(role=CustomUser.ROLE_ANNOTATOR).select_related('django_user', 'annotator_url').order_by('django_user__username')
+    review_assignment_rows = list(_attach_assignment_progress(
         AnnotatorBucketAssignment.objects.select_related(
             'annotator__django_user',
             'project',
         ).prefetch_related('project__labels')
-    )
+    ))
 
     selected_project_id = request.GET.get('project_id') or ''
     selected_annotator_id = request.GET.get('annotator_id') or ''
@@ -1312,22 +1137,1067 @@ def reviewer_dashboard_view(request):
         except (Project.DoesNotExist, CustomUser.DoesNotExist, ValueError):
             messages.error(request, 'Invalid reviewer filter values.')
 
+    return {
+        'custom_user': custom_user,
+        'display_name': _display_name_for_dashboard(custom_user.django_user),
+        'review_projects': projects,
+        'review_annotators': annotators,
+        'review_assignment_rows': review_assignment_rows,
+        'selected_project_id': selected_project_id,
+        'selected_annotator_id': selected_annotator_id,
+        'selected_review_date': selected_date,
+        'review_items': page_obj.object_list if page_obj else [],
+        'review_page_obj': page_obj,
+        'assignment_summary': _build_progress_summary(review_assignment_rows),
+        'base_template': 'accounts/reviewer_base.html',
+        'role_name': 'Reviewer',
+        'url_resources': URLResource.objects.order_by('name'),
+    }
+
+
+def _surveyor_dashboard_context(custom_user):
+    annotators = CustomUser.objects.filter(role=CustomUser.ROLE_ANNOTATOR).select_related(
+        'django_user',
+        'annotator_url',
+    ).order_by('django_user__username')
+    return {
+        'custom_user': custom_user,
+        'display_name': _display_name_for_dashboard(custom_user.django_user),
+        'annotators': annotators,
+        'base_template': 'accounts/surveyor_base.html',
+        'role_name': 'Surveyor Head',
+        'url_resources': URLResource.objects.order_by('name'),
+    }
+
+
+def _admin_dashboard_context(request, custom_user, include_reviewer=False):
+    role_count_map = {item['role']: item['count'] for item in CustomUser.objects.values('role').annotate(count=Count('id'))}
+    users = CustomUser.objects.select_related('django_user', 'annotator_url').order_by('django_user__username')
+    annotators = list(CustomUser.objects.filter(role=CustomUser.ROLE_ANNOTATOR).select_related(
+        'django_user',
+        'assigned_project',
+        'annotator_url',
+    ).prefetch_related('assigned_project__labels', 'bucket_assignments__project__labels'))
+    all_assignments = []
+    for annotator in annotators:
+        annotator.bucket_assignment_list = _attach_assignment_progress(
+            annotator.bucket_assignments.all()
+        )
+        all_assignments.extend(annotator.bucket_assignment_list)
+
+    projects = Project.objects.select_related('organization').prefetch_related('labels').order_by('name')
+    labels = Label.objects.prefetch_related('projects').order_by('name')
+    context = {
+        'custom_user': custom_user,
+        'display_name': _display_name_for_dashboard(custom_user.django_user),
+        'users': users,
+        'annotators': annotators,
+        'projects': projects,
+        'labels': labels,
+        'assignment_summary': _build_progress_summary(all_assignments),
+        'display_role_counts': {
+            'admin': role_count_map.get(CustomUser.ROLE_ADMIN, 0),
+            'assigner': role_count_map.get(CustomUser.ROLE_ASSIGNER, 0),
+            'annotator': role_count_map.get(CustomUser.ROLE_ANNOTATOR, 0),
+            'reviewer': role_count_map.get(CustomUser.ROLE_REVIEWER, 0),
+            'surveyor_head': role_count_map.get(CustomUser.ROLE_SURVEYOR_HEAD, 0),
+        },
+        'role_choices': CustomUser.ROLE_CHOICES,
+        'base_template': 'accounts/admin_base.html',
+        'role_name': 'Admin',
+    }
+    if include_reviewer:
+        reviewer_context = _reviewer_dashboard_context(request, custom_user)
+        context.update(
+            {
+                'review_projects': reviewer_context['review_projects'],
+                'review_annotators': reviewer_context['review_annotators'],
+                'selected_project_id': reviewer_context['selected_project_id'],
+                'selected_annotator_id': reviewer_context['selected_annotator_id'],
+                'selected_review_date': reviewer_context['selected_review_date'],
+                'review_items': reviewer_context['review_items'],
+                'review_page_obj': reviewer_context['review_page_obj'],
+            }
+        )
+    return context
+
+
+@login_required(login_url='login')
+def dashboard_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user:
+        messages.error(request, 'User profile not found.')
+        return redirect('logout')
+
+    if custom_user.role == CustomUser.ROLE_ADMIN:
+        return redirect('admin_home')
+    if custom_user.role == CustomUser.ROLE_ASSIGNER:
+        return redirect('assigner_home')
+    if custom_user.role == CustomUser.ROLE_SURVEYOR_HEAD:
+        return redirect('surveyor_home')
+    if custom_user.role == CustomUser.ROLE_REVIEWER:
+        return redirect('reviewer_home')
+    return redirect('annotator_home')
+
+
+@login_required(login_url='login')
+def admin_dashboard_view(request):
+    return redirect('admin_home')
+
+
+@login_required(login_url='login')
+def admin_home_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ADMIN:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'create_project':
+            name = (request.POST.get('project_name') or '').strip()
+            description = (request.POST.get('project_description') or '').strip()
+            if not name:
+                messages.error(request, 'Project name is required.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            organization = _get_or_create_assigner_organization(custom_user)
+            try:
+                Project.objects.create(
+                    name=name,
+                    description=description,
+                    owner=custom_user,
+                    organization=organization,
+                )
+            except IntegrityError:
+                messages.error(request, f'Project "{name}" already exists in your workspace.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            messages.success(request, f'Project "{name}" created successfully.')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        if action == 'create_label':
+            label_name = (request.POST.get('label_name') or '').strip()
+            used_colors = set(c.lower() for c in Label.objects.values_list('color', flat=True))
+            color = _sanitize_label_color(request.POST.get('label_color'), used_colors)
+            project_ids = _parse_project_ids(request.POST.getlist('project_ids'))
+            if not label_name or not project_ids:
+                messages.error(request, 'Label name and at least one project are required.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            projects = _resolve_projects_for_label(custom_user, project_ids)
+            if projects is None:
+                messages.error(request, 'One or more selected projects were not found.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            if _label_name_conflict(label_name):
+                messages.error(request, f'Label "{label_name}" already exists.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            label = Label.objects.create(name=label_name, color=color)
+            label.projects.set(projects)
+            messages.success(request, f'Label "{label_name}" linked to {len(projects)} project(s).')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        if action == 'edit_label':
+            label_id = request.POST.get('label_id')
+            label_name = (request.POST.get('label_name') or '').strip()
+            used_colors = set(
+                c.lower() for c in Label.objects.exclude(id=label_id).values_list('color', flat=True)
+            )
+            color = _sanitize_label_color(request.POST.get('label_color'), used_colors)
+            project_ids = _parse_project_ids(request.POST.getlist('project_ids'))
+            if not label_id or not label_name:
+                messages.error(request, 'Label ID and label name are required.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            try:
+                label = Label.objects.get(id=label_id)
+            except Label.DoesNotExist:
+                messages.error(request, 'Label not found.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            projects = _resolve_projects_for_label(custom_user, project_ids)
+            if projects is None:
+                messages.error(request, 'One or more selected projects were not found.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            if _label_name_conflict(label_name, exclude_id=label.id):
+                messages.error(request, f'Label "{label_name}" already exists.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            _upsert_label_with_projects(label=label, name=label_name, color=color, projects=projects)
+            messages.success(request, f'Label "{label_name}" updated successfully.')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        if action == 'bulk_update_labels':
+            label_ids = request.POST.getlist('label_ids')
+            if not label_ids:
+                messages.error(request, 'No labels were submitted for update.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            used_colors = set(
+                c.lower() for c in Label.objects.exclude(id__in=label_ids).values_list('color', flat=True)
+            )
+            updated = 0
+            for label_id in label_ids:
+                try:
+                    label = Label.objects.get(id=label_id)
+                except Label.DoesNotExist:
+                    messages.error(request, f'Label with ID {label_id} not found.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                label_name = (request.POST.get(f'label_name_{label_id}') or '').strip()
+                color = _sanitize_label_color(request.POST.get(f'label_color_{label_id}'), used_colors)
+                project_ids = _parse_project_ids(request.POST.getlist(f'project_ids_{label_id}'))
+
+                if not label_name:
+                    messages.error(request, 'Label name is required for all labels.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                projects = _resolve_projects_for_label(custom_user, project_ids)
+                if projects is None:
+                    messages.error(request, 'One or more selected projects were not found.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                if _label_name_conflict(label_name, exclude_id=label.id):
+                    messages.error(request, f'Label "{label_name}" already exists.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                _upsert_label_with_projects(label=label, name=label_name, color=color, projects=projects)
+                used_colors.add(color.lower())
+                updated += 1
+
+            messages.success(request, f'Saved changes for {updated} label(s).')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        if action == 'delete_bucket_assignment':
+            assignment_id = request.POST.get('assignment_id')
+            try:
+                assignment = AnnotatorBucketAssignment.objects.select_related('annotator__django_user').get(id=assignment_id)
+            except AnnotatorBucketAssignment.DoesNotExist:
+                messages.error(request, 'Bucket assignment not found.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            annotator_name = assignment.annotator.django_user.username
+            assignment.delete()
+            messages.success(request, f'Removed bucket assignment for {annotator_name}.')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        if action == 'add_bucket_assignment':
+            annotator_id = request.POST.get('annotator_id')
+            assigned_s3_path = (request.POST.get('assigned_s3_path') or '').strip()
+            project_id = request.POST.get('assigned_project_id')
+            display_name = (request.POST.get('display_name') or '').strip()
+
+            if not annotator_id or not assigned_s3_path:
+                messages.error(request, 'Select an annotator and provide a bucket path.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            try:
+                annotator = CustomUser.objects.select_related('django_user').get(
+                    id=annotator_id,
+                    role=CustomUser.ROLE_ANNOTATOR,
+                )
+            except CustomUser.DoesNotExist:
+                messages.error(request, 'Annotator not found.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            assigned_project = None
+            if project_id:
+                try:
+                    assigned_project = Project.objects.get(id=project_id)
+                except Project.DoesNotExist:
+                    messages.error(request, 'Assigned project not found.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+            assignment = AnnotatorBucketAssignment.objects.create(
+                annotator=annotator,
+                project=assigned_project,
+                s3_path=assigned_s3_path,
+                display_name=display_name or assigned_s3_path,
+            )
+
+            if not annotator.assigned_project and assigned_project:
+                annotator.assigned_project = assigned_project
+                annotator.assigned_s3_path = assigned_s3_path
+                annotator.save(update_fields=['assigned_project', 'assigned_s3_path', 'updated_date'])
+
+            messages.success(
+                request,
+                f'Added bucket "{assignment.display_name}" for {annotator.django_user.username}.',
+            )
+            return _redirect_to_current_page(request, 'admin_home')
+
+        if action == 'delete_review_json':
+            review_key = request.POST.get('review_key') or ''
+            if not review_key:
+                messages.error(request, 'Review JSON key is required.')
+                return _redirect_to_current_page(request, 'admin_home')
+            deleted, delete_message = _delete_review_json_object(review_key)
+            if deleted:
+                messages.success(request, f'Deleted {os.path.basename(review_key)} from S3.')
+            else:
+                messages.error(request, f'Could not delete JSON from S3. {delete_message}')
+            return redirect(
+                f"{request.path}?project_id={request.POST.get('project_id','')}&annotator_id={request.POST.get('annotator_id','')}&review_date={request.POST.get('review_date','')}&page={request.POST.get('page','1')}"
+            )
+
+        if action == 'bulk_update_users':
+            user_ids = request.POST.getlist('user_ids')
+            if not user_ids:
+                messages.error(request, 'No users were submitted for update.')
+                return _redirect_to_current_page(request, 'admin_home')
+
+            valid_roles = {choice[0] for choice in CustomUser.ROLE_CHOICES}
+            updated = 0
+
+            for user_id in user_ids:
+                role = request.POST.get(f'role_{user_id}')
+                is_verified = request.POST.get(f'verified_{user_id}') == 'on'
+                project_id_raw = request.POST.get(f'assigned_project_{user_id}') or ''
+
+                if not role:
+                    messages.error(request, f'Missing role selection for user {user_id}.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                if role not in valid_roles:
+                    messages.error(request, 'Invalid role selected.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                try:
+                    target_user = CustomUser.objects.select_related('django_user').get(id=user_id)
+                except CustomUser.DoesNotExist:
+                    messages.error(request, f'User profile with ID {user_id} not found.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                if target_user.id == custom_user.id and role != CustomUser.ROLE_ADMIN:
+                    messages.error(request, 'You cannot remove your own admin role from this dashboard.')
+                    return _redirect_to_current_page(request, 'admin_home')
+
+                # Resolve project selection
+                new_project = None
+                if project_id_raw:
+                    try:
+                        new_project = Project.objects.get(id=project_id_raw)
+                    except Project.DoesNotExist:
+                        messages.error(request, f'Assigned project not found for user {target_user.django_user.username}.')
+                        return _redirect_to_current_page(request, 'admin_home')
+
+                if target_user.role != role or target_user.is_verified != is_verified:
+                    target_user.role = role
+                    target_user.is_verified = is_verified
+                    target_user.save(update_fields=['role', 'is_verified', 'updated_date'])
+                    updated += 1
+
+                if target_user.assigned_project != new_project:
+                    target_user.assigned_project = new_project
+                    target_user.save(update_fields=['assigned_project', 'updated_date'])
+                    updated += 1
+
+                if role == CustomUser.ROLE_ANNOTATOR:
+                    ok, status = _save_annotator_url(
+                        target_user,
+                        request.POST.get(f'url_name_{user_id}'),
+                        request.POST.get(f'url_value_{user_id}'),
+                        request.POST.get(f'url_resource_{user_id}') or None,
+                    )
+                    if not ok:
+                        messages.error(
+                            request,
+                            f"{target_user.django_user.username}: Both name and URL are required to save annotator URL.",
+                        )
+                        return _redirect_to_current_page(request, 'admin_home')
+                    if status in {'saved', 'cleared'}:
+                        updated += 1
+                else:
+                    AnnotatorURL.objects.filter(annotator=target_user).delete()
+
+            if updated:
+                messages.success(request, f'Saved changes for {updated} user(s).')
+            else:
+                messages.info(request, 'No changes to save.')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        target_user_id = request.POST.get('target_user_id')
+        role = request.POST.get('role')
+        is_verified = request.POST.get('is_verified') == 'on'
+
+        if not target_user_id or not role:
+            messages.error(request, 'target_user_id and role are required.')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        valid_roles = {choice[0] for choice in CustomUser.ROLE_CHOICES}
+        if role not in valid_roles:
+            messages.error(request, 'Invalid role selected.')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        try:
+            target_user = CustomUser.objects.select_related('django_user').get(id=target_user_id)
+        except CustomUser.DoesNotExist:
+            messages.error(request, 'User profile not found.')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        if target_user.id == custom_user.id and role != CustomUser.ROLE_ADMIN:
+            messages.error(request, 'You cannot remove your own admin role from this dashboard.')
+            return _redirect_to_current_page(request, 'admin_home')
+
+        target_user.role = role
+        target_user.is_verified = is_verified
+        target_user.save(update_fields=['role', 'is_verified', 'updated_date'])
+
+        if role == CustomUser.ROLE_ANNOTATOR:
+            ok, status = _save_annotator_url(
+                target_user,
+                request.POST.get(f'url_name_{target_user_id}'),
+                request.POST.get(f'url_value_{target_user_id}'),
+                request.POST.get(f'url_resource_{target_user_id}') or None,
+            )
+            if not ok:
+                messages.error(request, f"{target_user.django_user.username}: Both name and URL are required to save annotator URL.")
+                return _redirect_to_current_page(request, 'admin_home')
+            if status == 'cleared':
+                messages.info(request, f"Removed URL for {target_user.django_user.username}.")
+        else:
+            AnnotatorURL.objects.filter(annotator=target_user).delete()
+        messages.success(
+            request,
+            f"Updated {target_user.django_user.username}: role={target_user.get_role_display()}, verified={target_user.is_verified}.",
+        )
+        return _redirect_to_current_page(request, 'admin_home')
+
+    return render(request, 'accounts/admin_home.html', {**_admin_dashboard_context(request, custom_user), 'current_nav': 'home'})
+
+
+@login_required(login_url='login')
+def admin_verify_users_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ADMIN:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    if request.method == 'POST':
+        return admin_home_view(request)
+
+    context = {
+        'custom_user': custom_user,
+        'display_name': _display_name_for_dashboard(custom_user.django_user),
+        'users': CustomUser.objects.select_related('django_user')
+        .prefetch_related('annotator_url__resource')
+        .order_by('django_user__username'),
+        'role_choices': CustomUser.ROLE_CHOICES,
+        'url_resources': URLResource.objects.order_by('name'),
+        'projects': Project.objects.select_related('organization').order_by('organization__name', 'name'),
+        'base_template': 'accounts/admin_base.html',
+        'current_nav': 'verify_users',
+        'page_title': 'Verify Users',
+    }
+    return render(request, 'accounts/verify_user.html', context)
+
+
+def _admin_base_context(custom_user):
+    return {
+        'custom_user': custom_user,
+        'display_name': _display_name_for_dashboard(custom_user.django_user),
+        'base_template': 'accounts/admin_base.html',
+    }
+
+
+@login_required(login_url='login')
+def admin_create_project_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ADMIN:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    if request.method == 'POST':
+        return admin_home_view(request)
+    context = {
+        **_admin_base_context(custom_user),
+        'projects': Project.objects.select_related('organization').order_by('name'),
+        'current_nav': 'create_project',
+        'page_title': 'Create Project',
+    }
+    return render(request, 'accounts/create_project.html', context)
+
+
+@login_required(login_url='login')
+def admin_create_labels_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ADMIN:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    if request.method == 'POST':
+        return admin_home_view(request)
+    context = {
+        **_admin_base_context(custom_user),
+        'projects': Project.objects.select_related('organization').order_by('name'),
+        'labels': Label.objects.prefetch_related('projects').order_by('name'),
+        'current_nav': 'create_labels',
+        'page_title': 'Create Labels',
+        'default_label_color': _next_label_color(Label.objects.values_list('color', flat=True)),
+    }
+    return render(request, 'accounts/create_labels.html', context)
+
+
+@login_required(login_url='login')
+def admin_assign_tasks_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ADMIN:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    return admin_home_view(request) if request.method == 'POST' else render(
+        request,
+        'accounts/assgine_tasks.html',
+        {**_admin_dashboard_context(request, custom_user), 'current_nav': 'assign_tasks', 'page_title': 'Assign Tasks'},
+    )
+
+
+def _url_resource_context(custom_user, base_template):
+    return {
+        'custom_user': custom_user,
+        'display_name': _display_name_for_dashboard(custom_user.django_user),
+        'url_resources': URLResource.objects.order_by('name'),
+        'base_template': base_template,
+    }
+
+
+def _handle_url_resource_post(request, redirect_name, base_template):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user:
+        messages.error(request, 'User profile not found.')
+        return redirect('dashboard')
+
+    action = request.POST.get('action')
+    if action == 'create_url_resource':
+        name = (request.POST.get('resource_name') or '').strip()
+        url = (request.POST.get('resource_url') or '').strip()
+        if not name or not url:
+            messages.error(request, 'Name and URL are required.')
+            return _redirect_to_current_page(request, redirect_name)
+        URLResource.objects.get_or_create(name=name, url=url)
+        messages.success(request, f'Added URL "{name}".')
+        return _redirect_to_current_page(request, redirect_name)
+
+    if action == 'delete_url_resource':
+        resource_id = request.POST.get('resource_id')
+        try:
+            URLResource.objects.get(id=resource_id).delete()
+            messages.success(request, 'Deleted URL entry.')
+        except URLResource.DoesNotExist:
+            messages.error(request, 'URL entry not found.')
+        return _redirect_to_current_page(request, redirect_name)
+
+    return None
+
+
+@login_required(login_url='login')
+def admin_annotated_data_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ADMIN:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    if request.method == 'GET' and request.GET.get('action') == 'preview_review_image':
+        review_key = request.GET.get('review_key') or ''
+        if not review_key:
+            return HttpResponse(status=400)
+        preview_bytes = _review_json_preview_bytes(review_key)
+        if preview_bytes is None:
+            return HttpResponse(status=404)
+        return HttpResponse(preview_bytes, content_type='image/jpeg')
+    if request.method == 'POST':
+        return admin_home_view(request)
+    review_projects = Project.objects.order_by('name')
+    review_annotators = CustomUser.objects.filter(role=CustomUser.ROLE_ANNOTATOR).select_related('django_user').order_by('django_user__username')
+    selected_project_id = request.GET.get('project_id') or ''
+    selected_annotator_id = request.GET.get('annotator_id') or ''
+    selected_date = request.GET.get('review_date') or ''
+    review_items = []
+    page_obj = None
+    if selected_project_id and selected_annotator_id and selected_date:
+        try:
+            project = Project.objects.get(id=selected_project_id)
+            annotator = CustomUser.objects.select_related('django_user').get(
+                id=selected_annotator_id,
+                role=CustomUser.ROLE_ANNOTATOR,
+            )
+            review_date_obj = datetime.strptime(selected_date, '%Y-%m-%d').date()
+            review_items = _review_json_objects(
+                project_name=project.name,
+                annotator_name=annotator.django_user.username,
+                review_date=review_date_obj,
+            )
+            paginator = Paginator(review_items, 10)
+            page_obj = paginator.get_page(request.GET.get('page') or '1')
+            for item in page_obj.object_list:
+                item['preview_url'] = (
+                    f"{request.path}?action=preview_review_image"
+                    f"&review_key={quote(item['key'], safe='')}"
+                    f"&project_id={selected_project_id}"
+                    f"&annotator_id={selected_annotator_id}"
+                    f"&review_date={selected_date}"
+                    f"&page={page_obj.number}"
+                )
+            if not review_items:
+                messages.info(request, 'No review JSON files found for the selected project, annotator, and date.')
+        except (Project.DoesNotExist, CustomUser.DoesNotExist, ValueError):
+            messages.error(request, 'Invalid reviewer filter values.')
     return render(
         request,
-        'accounts/worker_dashboard.html',
+        'accounts/anotated_data.html',
         {
-            'custom_user': custom_user,
-            'user_type': custom_user.user_type,
-            'dashboard_title': 'Reviewer Dashboard',
-            'review_projects': projects,
-            'review_annotators': annotators,
+            **_admin_base_context(custom_user),
+            'review_projects': review_projects,
+            'review_annotators': review_annotators,
             'selected_project_id': selected_project_id,
             'selected_annotator_id': selected_annotator_id,
             'selected_review_date': selected_date,
             'review_items': page_obj.object_list if page_obj else [],
             'review_page_obj': page_obj,
-            'review_assignment_rows': review_assignment_rows,
+            'current_nav': 'annotated_data',
+            'page_title': 'Annotated Data',
         },
+    )
+
+
+@login_required(login_url='login')
+def admin_urls_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ADMIN:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    post_response = _handle_url_resource_post(request, 'admin_urls', 'accounts/admin_base.html') if request.method == 'POST' else None
+    if post_response:
+        return post_response
+    return render(
+        request,
+        'accounts/url_resources.html',
+        {**_url_resource_context(custom_user, 'accounts/admin_base.html'), 'current_nav': 'urls'},
+    )
+
+
+@login_required(login_url='login')
+def assigner_dashboard_view(request):
+    return redirect('assigner_home')
+
+
+@login_required(login_url='login')
+def assigner_home_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ASSIGNER:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'create_project':
+            name = (request.POST.get('project_name') or '').strip()
+            description = (request.POST.get('project_description') or '').strip()
+            if not name:
+                messages.error(request, 'Project name is required.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            organization = _get_or_create_assigner_organization(custom_user)
+            try:
+                Project.objects.create(
+                    name=name,
+                    description=description,
+                    owner=custom_user,
+                    organization=organization,
+                )
+            except IntegrityError:
+                messages.error(request, f'Project "{name}" already exists in your workspace.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            messages.success(request, f'Project "{name}" created successfully.')
+            return _redirect_to_current_page(request, 'assigner_home')
+
+        if action == 'create_label':
+            label_name = (request.POST.get('label_name') or '').strip()
+            used_colors = set(c.lower() for c in Label.objects.values_list('color', flat=True))
+            color = _sanitize_label_color(request.POST.get('label_color'), used_colors)
+            project_ids = _parse_project_ids(request.POST.getlist('project_ids'))
+            if not label_name or not project_ids:
+                messages.error(request, 'Label name and at least one project are required.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            projects = _resolve_projects_for_label(custom_user, project_ids)
+            if projects is None:
+                messages.error(request, 'One or more selected projects were not found.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            if _label_name_conflict(label_name):
+                messages.error(request, f'Label "{label_name}" already exists.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            label = Label.objects.create(name=label_name, color=color)
+            label.projects.set(projects)
+            messages.success(request, f'Label "{label_name}" linked to {len(projects)} project(s).')
+            return _redirect_to_current_page(request, 'assigner_home')
+
+        if action == 'edit_label':
+            label_id = request.POST.get('label_id')
+            label_name = (request.POST.get('label_name') or '').strip()
+            used_colors = set(
+                c.lower() for c in Label.objects.exclude(id=label_id).values_list('color', flat=True)
+            )
+            color = _sanitize_label_color(request.POST.get('label_color'), used_colors)
+            project_ids = _parse_project_ids(request.POST.getlist('project_ids'))
+            if not label_id or not label_name:
+                messages.error(request, 'Label ID and label name are required.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            try:
+                label = Label.objects.get(id=label_id)
+            except Label.DoesNotExist:
+                messages.error(request, 'Label not found.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            projects = _resolve_projects_for_label(custom_user, project_ids)
+            if projects is None:
+                messages.error(request, 'One or more selected projects were not found.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            if _label_name_conflict(label_name, exclude_id=label.id):
+                messages.error(request, f'Label "{label_name}" already exists.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            _upsert_label_with_projects(label=label, name=label_name, color=color, projects=projects)
+            messages.success(request, f'Label "{label_name}" updated successfully.')
+            return _redirect_to_current_page(request, 'assigner_home')
+
+        if action == 'bulk_update_labels':
+            label_ids = request.POST.getlist('label_ids')
+            if not label_ids:
+                messages.error(request, 'No labels were submitted for update.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            used_colors = set(
+                c.lower() for c in Label.objects.exclude(id__in=label_ids).values_list('color', flat=True)
+            )
+            updated = 0
+            for label_id in label_ids:
+                try:
+                    label = Label.objects.get(id=label_id)
+                except Label.DoesNotExist:
+                    messages.error(request, f'Label with ID {label_id} not found.')
+                    return _redirect_to_current_page(request, 'assigner_home')
+
+                label_name = (request.POST.get(f'label_name_{label_id}') or '').strip()
+                color = _sanitize_label_color(request.POST.get(f'label_color_{label_id}'), used_colors)
+                project_ids = _parse_project_ids(request.POST.getlist(f'project_ids_{label_id}'))
+
+                if not label_name:
+                    messages.error(request, 'Label name is required for all labels.')
+                    return _redirect_to_current_page(request, 'assigner_home')
+
+                projects = _resolve_projects_for_label(custom_user, project_ids)
+                if projects is None:
+                    messages.error(request, 'One or more selected projects were not found.')
+                    return _redirect_to_current_page(request, 'assigner_home')
+
+                if _label_name_conflict(label_name, exclude_id=label.id):
+                    messages.error(request, f'Label "{label_name}" already exists.')
+                    return _redirect_to_current_page(request, 'assigner_home')
+
+                _upsert_label_with_projects(label=label, name=label_name, color=color, projects=projects)
+                used_colors.add(color.lower())
+                updated += 1
+
+            messages.success(request, f'Saved changes for {updated} label(s).')
+            return _redirect_to_current_page(request, 'assigner_home')
+
+        if action == 'delete_bucket_assignment':
+            assignment_id = request.POST.get('assignment_id')
+            try:
+                assignment = AnnotatorBucketAssignment.objects.select_related('annotator__django_user').get(id=assignment_id)
+            except AnnotatorBucketAssignment.DoesNotExist:
+                messages.error(request, 'Bucket assignment not found.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+            annotator_name = assignment.annotator.django_user.username
+            assignment.delete()
+            messages.success(request, f'Removed bucket assignment for {annotator_name}.')
+            return _redirect_to_current_page(request, 'assigner_home')
+
+        annotator_id = request.POST.get('annotator_id')
+        assigned_s3_path = (request.POST.get('assigned_s3_path') or '').strip()
+        project_id = request.POST.get('assigned_project_id')
+        display_name = (request.POST.get('display_name') or '').strip()
+
+        if not annotator_id or not assigned_s3_path:
+            messages.error(request, 'Select an annotator and provide a bucket path.')
+            return _redirect_to_current_page(request, 'assigner_home')
+
+        try:
+            annotator = CustomUser.objects.select_related('django_user').get(
+                id=annotator_id,
+                role=CustomUser.ROLE_ANNOTATOR,
+            )
+        except CustomUser.DoesNotExist:
+            messages.error(request, 'Annotator not found.')
+            return _redirect_to_current_page(request, 'assigner_home')
+
+        assigned_project = None
+        if project_id:
+            try:
+                assigned_project = Project.objects.get(id=project_id, owner=custom_user)
+            except Project.DoesNotExist:
+                messages.error(request, 'Assigned project not found.')
+                return _redirect_to_current_page(request, 'assigner_home')
+
+        assignment = AnnotatorBucketAssignment.objects.create(
+            annotator=annotator,
+            project=assigned_project,
+            s3_path=assigned_s3_path,
+            display_name=display_name or assigned_s3_path,
+        )
+
+        if not annotator.assigned_project and assigned_project:
+            annotator.assigned_project = assigned_project
+            annotator.assigned_s3_path = assigned_s3_path
+            annotator.save(update_fields=['assigned_project', 'assigned_s3_path', 'updated_date'])
+
+        messages.success(
+            request,
+            f'Added bucket "{assignment.display_name}" for {annotator.django_user.username}.',
+        )
+        return _redirect_to_current_page(request, 'assigner_home')
+
+    return render(request, 'accounts/assigner_home.html', {**_assigner_dashboard_context(custom_user), 'current_nav': 'home'})
+
+
+@login_required(login_url='login')
+def assigner_create_project_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ASSIGNER:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    return assigner_home_view(request) if request.method == 'POST' else render(
+        request,
+        'accounts/create_project.html',
+        {**_assigner_dashboard_context(custom_user), 'current_nav': 'create_project', 'page_title': 'Create Project'},
+    )
+
+
+@login_required(login_url='login')
+def assigner_create_labels_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ASSIGNER:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    if request.method == 'POST':
+        return assigner_home_view(request)
+    context = {
+        **_assigner_dashboard_context(custom_user),
+        'current_nav': 'create_labels',
+        'page_title': 'Create Labels',
+        'default_label_color': _next_label_color(Label.objects.values_list('color', flat=True)),
+    }
+    return render(request, 'accounts/create_labels.html', context)
+
+
+@login_required(login_url='login')
+def assigner_assign_tasks_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ASSIGNER:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    return assigner_home_view(request) if request.method == 'POST' else render(
+        request,
+        'accounts/assgine_tasks.html',
+        {**_assigner_dashboard_context(custom_user), 'current_nav': 'assign_tasks', 'page_title': 'Assign Tasks'},
+    )
+
+
+@login_required(login_url='login')
+def surveyor_dashboard_view(request):
+    return redirect('surveyor_home')
+
+
+@login_required(login_url='login')
+def surveyor_home_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_SURVEYOR_HEAD:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'bulk_update_annotator_urls':
+            annotator_ids = request.POST.getlist('annotator_ids')
+            if not annotator_ids:
+                messages.error(request, 'No annotators were submitted.')
+                return _redirect_to_current_page(request, 'surveyor_home')
+
+            updated = cleared = 0
+            errors = []
+
+            for annotator_id in annotator_ids:
+                try:
+                    annotator = CustomUser.objects.select_related('django_user').get(
+                        id=annotator_id,
+                        role=CustomUser.ROLE_ANNOTATOR,
+                    )
+                except CustomUser.DoesNotExist:
+                    errors.append(f"ID {annotator_id}")
+                    continue
+
+                ok, status = _save_annotator_url(
+                    annotator,
+                    request.POST.get(f'url_name_{annotator_id}'),
+                    request.POST.get(f'url_value_{annotator_id}'),
+                    request.POST.get(f'url_resource_{annotator_id}') or None,
+                )
+                if not ok:
+                    errors.append(annotator.django_user.username)
+                    continue
+                if status == 'saved':
+                    updated += 1
+                elif status == 'cleared':
+                    cleared += 1
+
+            if updated or cleared:
+                messages.success(
+                    request,
+                    f'Saved URL changes (updated {updated}, cleared {cleared}).',
+                )
+            if errors:
+                messages.error(request, f"Could not save URL for: {', '.join(errors)}")
+            if not updated and not cleared and not errors:
+                messages.info(request, 'No URL changes to save.')
+            return _redirect_to_current_page(request, 'surveyor_home')
+
+    return render(
+        request,
+        'accounts/surveyor_home.html',
+        {**_surveyor_dashboard_context(custom_user), 'current_nav': 'home'},
+    )
+
+
+@login_required(login_url='login')
+def surveyor_urls_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_SURVEYOR_HEAD:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+
+    post_response = _handle_url_resource_post(request, 'surveyor_urls', 'accounts/surveyor_base.html') if request.method == 'POST' else None
+    if post_response:
+        return post_response
+
+    return render(
+        request,
+        'accounts/url_resources.html',
+        {**_url_resource_context(custom_user, 'accounts/surveyor_base.html'), 'current_nav': 'urls'},
+    )
+
+
+@login_required(login_url='login')
+def annotater_dashboard_view(request):
+    return redirect('annotator_home')
+
+
+@login_required(login_url='login')
+def annotator_home_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ANNOTATOR:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'set_bucket_completion':
+            assignment_id = request.POST.get('assignment_id')
+            mark_complete = request.POST.get('manual_complete') == '1'
+            try:
+                assignment = AnnotatorBucketAssignment.objects.select_related(
+                    'annotator__django_user',
+                    'project',
+                ).get(id=assignment_id, annotator=custom_user)
+            except AnnotatorBucketAssignment.DoesNotExist:
+                messages.error(request, 'Bucket assignment not found.')
+                return _redirect_to_current_page(request, 'annotator_home')
+
+            bucket_progress = _sync_assignment_progress(
+                assignment,
+                manual_complete_override=mark_complete,
+                manual_actor=custom_user.django_user.username,
+            )
+            if bucket_progress.get('status') == ASSIGNMENT_STATUS_UNAVAILABLE:
+                messages.error(request, 'Bucket progress JSON could not be updated.')
+            elif mark_complete:
+                messages.success(request, f'Bucket "{assignment.display_name}" marked complete.')
+            else:
+                messages.success(request, f'Bucket "{assignment.display_name}" moved back to in progress.')
+            return _redirect_to_current_page(request, 'annotator_home')
+
+    return render(request, 'accounts/annotator_home.html', {**_annotator_dashboard_context(custom_user), 'current_nav': 'home'})
+
+
+@login_required(login_url='login')
+def annotator_assigned_tasks_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_ANNOTATOR:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    return annotator_home_view(request) if request.method == 'POST' else render(
+        request,
+        'accounts/annotator_assigned_tasks.html',
+        {**_annotator_dashboard_context(custom_user), 'current_nav': 'assigned_tasks'},
+    )
+
+
+@login_required(login_url='login')
+def reviewer_dashboard_view(request):
+    return redirect('reviewer_home')
+
+
+@login_required(login_url='login')
+def reviewer_home_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_REVIEWER:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'delete_review_json':
+            review_key = request.POST.get('review_key') or ''
+            if not review_key:
+                messages.error(request, 'Review JSON key is required.')
+                return _redirect_to_current_page(request, 'reviewer_home')
+            deleted, delete_message = _delete_review_json_object(review_key)
+            if deleted:
+                messages.success(request, f'Deleted {os.path.basename(review_key)} from S3.')
+            else:
+                messages.error(request, f'Could not delete JSON from S3. {delete_message}')
+            return redirect(
+                f"{request.path}?project_id={request.POST.get('project_id','')}&annotator_id={request.POST.get('annotator_id','')}&review_date={request.POST.get('review_date','')}&page={request.POST.get('page','1')}"
+            )
+
+    return render(request, 'accounts/reviewer_home.html', {**_reviewer_dashboard_context(request, custom_user), 'current_nav': 'home'})
+
+
+@login_required(login_url='login')
+def reviewer_annotated_data_view(request):
+    custom_user = _get_custom_profile_or_none(request)
+    if not custom_user or custom_user.role != CustomUser.ROLE_REVIEWER:
+        messages.error(request, 'You do not have permission to access this page.')
+        return redirect('dashboard')
+    if request.method == 'GET' and request.GET.get('action') == 'preview_review_image':
+        review_key = request.GET.get('review_key') or ''
+        if not review_key:
+            return HttpResponse(status=400)
+        preview_bytes = _review_json_preview_bytes(review_key)
+        if preview_bytes is None:
+            return HttpResponse(status=404)
+        return HttpResponse(preview_bytes, content_type='image/jpeg')
+    if request.method == 'POST':
+        return reviewer_home_view(request)
+    return render(
+        request,
+        'accounts/anotated_data.html',
+        {**_reviewer_dashboard_context(request, custom_user), 'current_nav': 'annotated_data', 'page_title': 'Annotated Data'},
     )
 
 
@@ -1446,8 +2316,15 @@ def edit_worker_view(request, worker_id):
 
 
 @csrf_exempt
-@require_http_methods(["POST"])
+@require_http_methods(["GET", "POST"])
 def api_login_view(request):
+    if request.method == "GET":
+        return JsonResponse(
+            {
+                "success": True,
+                "message": "Login endpoint ready. Send POST with username and password.",
+            }
+        )
     payload = _parse_json_body(request)
     if payload is None:
         return _json_error("Invalid JSON body.", status=400)
@@ -1486,106 +2363,3 @@ def api_me_view(request):
     if error:
         return error
     return JsonResponse({"success": True, "user": _serialize_custom_user(request.user, profile)})
-
-
-@csrf_exempt
-@require_http_methods(["GET", "POST"])
-def api_organizations_view(request):
-    profile, error = _api_authenticate_request(request)
-    if error:
-        return error
-
-    if request.method == 'GET':
-        qs = Organization.objects.all().select_related('owner__django_user')
-        return JsonResponse({"success": True, "results": [_serialize_organization(o) for o in qs]})
-
-    denied = _api_require_roles(profile, {CustomUser.ROLE_ADMIN, CustomUser.ROLE_ASSIGNER})
-    if denied:
-        return denied
-
-    payload = _parse_json_body(request)
-    if payload is None:
-        return _json_error("Invalid JSON body.")
-
-    name = payload.get('name')
-    if not name:
-        return _json_error("name is required.")
-
-    obj = Organization.objects.create(name=name, owner=profile)
-    obj.members.add(profile)
-    return JsonResponse({"success": True, "organization": _serialize_organization(obj)}, status=201)
-
-
-@csrf_exempt
-@require_http_methods(["GET", "POST"])
-def api_projects_view(request):
-    profile, error = _api_authenticate_request(request)
-    if error:
-        return error
-
-    if request.method == 'GET':
-        qs = Project.objects.all().select_related('organization', 'owner__django_user')
-        org_id = request.GET.get('organization_id')
-        if org_id:
-            qs = qs.filter(organization_id=org_id)
-        return JsonResponse({"success": True, "results": [_serialize_project(p) for p in qs]})
-
-    denied = _api_require_roles(profile, {CustomUser.ROLE_ADMIN, CustomUser.ROLE_ASSIGNER})
-    if denied:
-        return denied
-
-    payload = _parse_json_body(request)
-    if payload is None:
-        return _json_error("Invalid JSON body.")
-
-    name = payload.get('name')
-    organization_id = payload.get('organization_id')
-    if not name or not organization_id:
-        return _json_error("name and organization_id are required.")
-
-    try:
-        organization = Organization.objects.get(id=organization_id)
-    except Organization.DoesNotExist:
-        return _json_error("organization not found.", status=404)
-
-    obj = Project.objects.create(
-        name=name,
-        description=payload.get('description', ''),
-        owner=profile,
-        organization=organization,
-    )
-    return JsonResponse({"success": True, "project": _serialize_project(obj)}, status=201)
-
-
-@csrf_exempt
-@require_http_methods(["GET", "POST"])
-def api_labels_view(request):
-    profile, error = _api_authenticate_request(request)
-    if error:
-        return error
-
-    if request.method == 'GET':
-        qs = Label.objects.all().select_related('project')
-        project_id = request.GET.get('project_id')
-        if project_id:
-            qs = qs.filter(project_id=project_id)
-        return JsonResponse({"success": True, "results": [_serialize_label(l) for l in qs]})
-
-    denied = _api_require_roles(profile, {CustomUser.ROLE_ADMIN, CustomUser.ROLE_ASSIGNER})
-    if denied:
-        return denied
-
-    payload = _parse_json_body(request)
-    if payload is None:
-        return _json_error("Invalid JSON body.")
-
-    if not payload.get('name') or not payload.get('project_id'):
-        return _json_error("name and project_id are required.")
-
-    try:
-        project = Project.objects.get(id=payload['project_id'])
-    except Project.DoesNotExist:
-        return _json_error("project not found.", status=404)
-
-    obj = Label.objects.create(name=payload['name'], project=project, color=payload.get('color', '#FF5733'))
-    return JsonResponse({"success": True, "label": _serialize_label(obj)}, status=201)

@@ -1,0 +1,22 @@
+{% extends 'accounts/assginer_base.html' %}
+{% block dashboard_content %}
+<section class="summary-grid">
+    <article class="summary-card"><div class="summary-card__label">Projects</div><div class="summary-card__value">{{ projects|length }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Labels</div><div class="summary-card__value">{{ labels|length }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Buckets</div><div class="summary-card__value">{{ assignment_summary.total }}</div></article>
+    <article class="summary-card"><div class="summary-card__label">Pending</div><div class="summary-card__value">{{ assignment_summary.pending }}</div></article>
+</section>
+<section class="content-card">
+    <div class="content-card__header"><div><h2 class="content-card__title">Bucket Task Info</h2><p class="content-card__hint">Home page shows overview and bucket task status.</p></div></div>
+    <div class="card-grid">
+        {% for annotator in annotators %}
+        <article class="soft-card">
+            <strong>{{ annotator.django_user.username }}</strong>
+            <div class="mt-2 text-muted small">{{ annotator.bucket_assignment_list|length }} assigned buckets</div>
+        </article>
+        {% empty %}
+        <article class="soft-card">No annotators found.</article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

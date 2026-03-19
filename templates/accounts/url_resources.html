@@ -1,0 +1,54 @@
+{% extends base_template %}
+{% block dashboard_content %}
+<section class="content-card">
+    <div class="content-card__header">
+        <div>
+            <h2 class="content-card__title">URL Library</h2>
+            <p class="content-card__hint">Add reusable URLs, then assign them from the dropdown on Annotator URLs pages.</p>
+        </div>
+    </div>
+
+    <form method="post" class="form-grid mb-4">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_url_resource">
+        <div class="field-group">
+            <span class="field-label">Name</span>
+            <input type="text" name="resource_name" required placeholder="LabelMe Portal">
+        </div>
+        <div class="field-group">
+            <span class="field-label">URL</span>
+            <input type="url" name="resource_url" required placeholder="https://example.com/path">
+        </div>
+        <div class="align-self-end">
+            <button type="submit" class="btn btn-primary">Add URL</button>
+        </div>
+    </form>
+
+    <div style="overflow:auto;">
+        <table class="dashboard-table">
+            <thead>
+                <tr><th>Name</th><th>URL</th><th>Created</th><th></th></tr>
+            </thead>
+            <tbody>
+                {% for resource in url_resources %}
+                <tr>
+                    <td>{{ resource.name }}</td>
+                    <td><a href="{{ resource.url }}" target="_blank" rel="noopener">{{ resource.url }}</a></td>
+                    <td>{{ resource.created_date|date:"Y-m-d H:i" }}</td>
+                    <td>
+                        <form method="post" style="margin:0;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="delete_url_resource">
+                            <input type="hidden" name="resource_id" value="{{ resource.id }}">
+                            <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4" style="text-align:center; padding:24px; color:var(--muted);">No URLs yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

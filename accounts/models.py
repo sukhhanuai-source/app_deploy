@@ -7,12 +7,14 @@ class CustomUser(models.Model):
     ROLE_ANNOTATOR = 'annotator'
     ROLE_REVIEWER = 'reviewer'
     ROLE_ASSIGNER = 'assigner'
+    ROLE_SURVEYOR_HEAD = 'surveyor_head'
 
     ROLE_CHOICES = (
         (ROLE_ADMIN, 'Admin'),
         (ROLE_ANNOTATOR, 'Annotator'),
         (ROLE_REVIEWER, 'Reviewer'),
         (ROLE_ASSIGNER, 'Assigner'),
+        (ROLE_SURVEYOR_HEAD, 'Surveyor Head'),
     )
 
     django_user = models.OneToOneField(
@@ -49,6 +51,48 @@ class CustomUser(models.Model):
 
     class Meta:
         ordering = ['-created_date']
+
+
+class AnnotatorURL(models.Model):
+    annotator = models.OneToOneField(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='annotator_url',
+        limit_choices_to={'role': CustomUser.ROLE_ANNOTATOR},
+    )
+    resource = models.ForeignKey(
+        'URLResource',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='annotator_urls',
+        help_text='Optional reference to a reusable URL entry.'
+    )
+    name = models.CharField(max_length=255)
+    url = models.URLField(max_length=1024)
+    created_date = models.DateTimeField(auto_now_add=True, null=True)
+    updated_date = models.DateTimeField(auto_now=True, null=True)
+
+    def __str__(self):
+        return f"{self.annotator.django_user.username}: {self.name}"
+
+    class Meta:
+        ordering = ['annotator__django_user__username']
+        verbose_name = 'Annotator URL'
+        verbose_name_plural = 'Annotator URLs'
+
+
+class URLResource(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    url = models.URLField(max_length=1024, unique=True)
+    created_date = models.DateTimeField(auto_now_add=True, null=True)
+    updated_date = models.DateTimeField(auto_now=True, null=True)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        ordering = ['name']
 
 
 class Organization(models.Model):
@@ -97,18 +141,15 @@ class Project(models.Model):
 
 
 class Label(models.Model):
-    name = models.CharField(max_length=100)
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='labels')
+    name = models.CharField(max_length=100, unique=True)
+    projects = models.ManyToManyField(Project, related_name='labels', blank=True)
     color = models.CharField(max_length=20, default='#FF5733')
 
     def __str__(self):
-        return f"{self.project.name}: {self.name}"
+        return self.name
 
     class Meta:
         ordering = ['name']
-        constraints = [
-            models.UniqueConstraint(fields=['project', 'name'], name='uniq_label_name_per_project')
-        ]
 
 
 class AnnotatorBucketAssignment(models.Model):
